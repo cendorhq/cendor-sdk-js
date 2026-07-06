@@ -9,13 +9,27 @@ concurrency: release-${{ github.ref }}
 permissions:
   contents: write
   pull-requests: write
-  id-token: write # npm provenance + OIDC trusted publishing (tokenless)
+  id-token: write # npm provenance via OIDC
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: cendor-sdk-js
+
+      # The SDK builds against the sibling @cendor/* libs (pnpm.overrides `link:`). Check them out +
+      # build so `pnpm install` resolves. NOTE: this only affects the SDK's OWN build — the PUBLISHED
+      # @cendor/sdk keeps its clean `^x` dependency ranges (overrides live in the private root manifest,
+      # never in the published package), so users install @cendor/* from npm. Publish the libs first.
+      # Needs a `LIBS_REPO_TOKEN` secret (repo-scoped PAT) while cendor-libs-js is private.
+      - uses: actions/checkout@v4
+        with:
+          repository: cendorhq/cendor-libs-js
+          path: cendor-libs-js
+          token: ${{ secrets.LIBS_REPO_TOKEN || secrets.GITHUB_TOKEN }}
+
       - uses: pnpm/action-setup@v4
         with:
           version: 9
@@ -23,18 +37,25 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+          cache-dependency-path: cendor-sdk-js/pnpm-lock.yaml
           registry-url: https://registry.npmjs.org
-      # Publishing installs @cendor/* from npm (they are published first, from cendor-libs-js). For a
-      # local publish, remove the pnpm.overrides link block or ensure the sibling repo is present.
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
+
+      - name: Build the linked @cendor/* libraries
+        run: cd cendor-libs-js && pnpm install --frozen-lockfile && pnpm build
+      - name: Install + build the SDK
+        run: cd cendor-sdk-js && pnpm install --frozen-lockfile && pnpm build
+
+      # Authenticates with the `NPM_TOKEN` repo secret (npm automation token for the `cendor` org).
+      # provenance:true + id-token attach a provenance attestation. Changesets tags `@cendor/sdk@<v>`.
       - name: Create Release PR or publish
         uses: changesets/action@v1
         with:
+          cwd: cendor-sdk-js
           version: pnpm version-packages
           publish: pnpm release
           commit: "chore: version packages"
           title: "chore: version packages"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: "true"
