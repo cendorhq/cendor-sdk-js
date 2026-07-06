@@ -205,6 +205,62 @@ export function streamUsage(prompt = 5, completion = 2): unknown {
   };
 }
 
+/** Build a Gemini `generateContent` response object (candidates[].content.parts). */
+export function geminiResponse(opts: {
+  text?: string;
+  functionCall?: { name: string; args: Record<string, unknown> };
+  finishReason?: string;
+}): unknown {
+  const parts: unknown[] = [];
+  if (opts.text != null) parts.push({ text: opts.text });
+  if (opts.functionCall)
+    parts.push({ function_call: { name: opts.functionCall.name, args: opts.functionCall.args } });
+  return { candidates: [{ finish_reason: opts.finishReason ?? 'STOP', content: { parts } }] };
+}
+
+/** Build a Bedrock Converse response object (output.message.content[]). */
+export function bedrockResponse(opts: {
+  text?: string;
+  toolUse?: { id?: string; name: string; input: Record<string, unknown> };
+  stopReason?: string;
+}): unknown {
+  const content: unknown[] = [];
+  if (opts.text != null) content.push({ text: opts.text });
+  if (opts.toolUse)
+    content.push({
+      toolUse: {
+        toolUseId: opts.toolUse.id ?? 'tu_1',
+        name: opts.toolUse.name,
+        input: opts.toolUse.input,
+      },
+    });
+  return {
+    output: { message: { content } },
+    stopReason: opts.stopReason ?? (opts.toolUse ? 'tool_use' : 'end_turn'),
+  };
+}
+
+/** Build an Ollama chat response object (message + top-level done/done_reason + eval counts). */
+export function ollamaResponse(opts: {
+  content?: string | null;
+  toolCalls?: { name: string; arguments: Record<string, unknown> }[];
+  done?: boolean;
+  doneReason?: string;
+}): unknown {
+  const message: Record<string, unknown> = { role: 'assistant', content: opts.content ?? null };
+  if (opts.toolCalls)
+    message.tool_calls = opts.toolCalls.map((t) => ({
+      function: { name: t.name, arguments: t.arguments },
+    }));
+  return {
+    message,
+    done: opts.done ?? true,
+    done_reason: opts.doneReason ?? 'stop',
+    prompt_eval_count: 11,
+    eval_count: 3,
+  };
+}
+
 /** Build an Anthropic Messages response object (the exact wire shape). */
 export function anthropicMessage(opts: {
   text?: string;
