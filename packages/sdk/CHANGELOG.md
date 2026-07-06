@@ -1,5 +1,11 @@
 # @cendor/sdk
 
+## 0.3.1
+
+### Patch Changes
+
+- f08aaa1: Plain-language npm package description (metadata only — no code change).
+
 ## 0.3.0
 
 ### Minor Changes
