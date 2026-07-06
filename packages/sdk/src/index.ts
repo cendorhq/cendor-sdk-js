@@ -91,3 +91,19 @@ export type { Approver } from './hitl.js';
 
 // OpenTelemetry (no-op without @opentelemetry/api)
 export { spanTree, liveSpans } from './otel.js';
+
+// Checkpoint / resume durability
+export { Checkpointer, asCheckpointer } from './checkpoint.js';
+export type { CheckpointState } from './checkpoint.js';
+
+// MCP client (tools / prompts / resources)
+export { loadMcpTools, loadMcpPrompts, getMcpPrompt, loadMcpResources } from './mcp.js';
+export type { McpSession } from './mcp.js';
+
+// A2A (Agent-to-Agent protocol)
+export { A2AServer, A2AClient, serve } from './a2a.js';
+export type { AgentCard, A2AMessage, JsonRpcResponse } from './a2a.js';
+
+// Foundry / Bot Framework adapter
+export { FoundryAdapter } from './foundry.js';
+export type { Activity, FoundryManifest } from './foundry.js';

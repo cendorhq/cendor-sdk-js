@@ -36,7 +36,8 @@
   "peerDependencies": {
     "openai": ">=4",
     "@anthropic-ai/sdk": ">=0.30",
-    "@opentelemetry/api": ">=1"
+    "@opentelemetry/api": ">=1",
+    "@modelcontextprotocol/sdk": ">=1"
   },
   "peerDependenciesMeta": {
     "openai": {
@@ -46,6 +47,9 @@
       "optional": true
     },
     "@opentelemetry/api": {
+      "optional": true
+    },
+    "@modelcontextprotocol/sdk": {
       "optional": true
     }
   },

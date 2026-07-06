@@ -11,6 +11,7 @@ import type { AuditLog, Decision } from '@cendor/acttrace';
 import { LLMCall, ToolCall, bus, installTraceContext, trace } from '@cendor/core';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { Agent } from './agent.js';
+import { type Checkpointer, asCheckpointer } from './checkpoint.js';
 import { type Provider, assistantMessage, toolResultMessage } from './providers.js';
 import { formatContext } from './rag.js';
 import { type RetryPolicy, callWithRetry } from './resilience.js';
@@ -44,6 +45,8 @@ export interface RunOptions {
   maxTurns?: number | null;
   retry?: RetryPolicy | null;
   onStep?: ((step: Step) => void) | null;
+  /** A checkpoint path or `Checkpointer` — persists the conversation after each turn so a crashed run resumes. */
+  checkpoint?: Checkpointer | string | null;
 }
 
 /** The minimal session surface the runner needs. `replace` may be async (awaited write-back). */
@@ -244,6 +247,8 @@ export interface LoopConfig {
   toolset: Tool[];
   resolve: (name: string) => Tool | null | undefined;
   transferTargets: ReadonlyMap<string, string>;
+  /** Checkpoint hook (PY `on_turn`): called with `messages` after each turn — after a tool turn and after the final answer. */
+  onTurn?: ((messages: Message[]) => void) | null;
 }
 
 /**
@@ -273,10 +278,12 @@ export async function agentLoop(
         const target = cfg.transferTargets.get(tc.name);
         if (target) switchTo = target;
       }
+      cfg.onTurn?.(messages);
       if (switchTo) return { output: null, switchTo };
       continue;
     }
     output = parsed.content;
+    cfg.onTurn?.(messages);
     return { output, switchTo: null };
   }
   return { output, switchTo: null };
@@ -463,10 +470,17 @@ export class Runner {
 
   async run(input: string | Message | Message[]): Promise<Result> {
     const agent = this.agent;
+    // Mint a fresh runId even on resume (single-agent parity with PY runner._start).
     const runId = uuidHex();
+    const ckpt = asCheckpointer(this.opts.checkpoint);
     const { provider, create } = providerAndCreate(agent);
     const maxTurns = this.opts.maxTurns ?? agent.maxTurns;
-    const messages = await prepareMessages(agent, input, this.opts.session);
+    const resume = ckpt?.resumableMessages() ?? null;
+    const messages =
+      resume !== null ? resume : await prepareMessages(agent, input, this.opts.session);
+    const onTurn = ckpt
+      ? (msgs: Message[]): void => ckpt.save({ run_id: runId, messages: msgs, done: false })
+      : null;
     const { steps, sub } = makeCollector(
       (t) => t === runId,
       () => agent.name,
@@ -484,10 +498,12 @@ export class Runner {
             toolset: agent.tools,
             resolve: (n) => agent.getTool(n),
             transferTargets: EMPTY_TARGETS,
+            onTurn,
           }),
         ),
       );
       await this.opts.session?.replace(messages);
+      ckpt?.save({ run_id: runId, messages, done: true, output: res.output });
       return new Result({
         output: parseOutput(res.output, agent.outputType),
         steps,

@@ -10,6 +10,7 @@ import { bus, trace } from '@cendor/core';
 import { track, withBudget } from '@cendor/tokenguard';
 import { z } from 'zod';
 import type { Agent, HandoffTarget } from './agent.js';
+import { type Checkpointer, asCheckpointer } from './checkpoint.js';
 import {
   type EventQueue,
   agentLoop,
@@ -101,31 +102,87 @@ function agentFromTrace(parent: string): (traceId: string) => string {
   };
 }
 
+/**
+ * Resolve `(parent, messages, active, seen, startSeg)` from an unfinished checkpoint, or start fresh.
+ * Multi-agent resume PRESERVES the saved run_id (the parent trace id) and ignores the new input (PY
+ * `_resume_state`).
+ */
+async function resumeState(
+  ckpt: Checkpointer | null,
+  agents: Agent[],
+  input: string | Message | Message[],
+  session: RunOptions['session'],
+): Promise<{
+  parent: string;
+  messages: Message[];
+  active: Agent;
+  seen: string[];
+  startSeg: number;
+}> {
+  const registry = new Map(agents.map((a) => [a.name, a]));
+  const state = ckpt?.load() ?? null;
+  if (state && !state.done) {
+    return {
+      parent: state.run_id || uuidHex(),
+      messages: [...(state.messages ?? [])],
+      active: registry.get(state.active ?? '') ?? agents[0]!,
+      seen: [...(state.seen ?? [])],
+      startSeg: state.seg ?? 0,
+    };
+  }
+  return {
+    parent: uuidHex(),
+    messages: await prepareMessages(agents[0]!, input, session),
+    active: agents[0]!,
+    seen: [],
+    startSeg: 0,
+  };
+}
+
 /** Run a handoff team. `agents[0]` is the entry point; peers are reachable by handoff. */
 export async function runAgents(
   agents: Agent[],
   input: string | Message | Message[],
   opts: RunOptions = {},
 ): Promise<Result> {
+  const ckpt = asCheckpointer(opts.checkpoint);
   const registry = new Map(agents.map((a) => [a.name, a]));
-  const parent = uuidHex();
+  const {
+    parent,
+    messages,
+    active: startActive,
+    seen,
+    startSeg,
+  } = await resumeState(ckpt, agents, input, opts.session);
   const { steps, sub } = makeCollector(
     (t) => t.startsWith(`${parent}:`),
     agentFromTrace(parent),
     opts.onStep,
   );
   bus.subscribe(sub);
-  const seen: string[] = [];
-  const messages = await prepareMessages(agents[0]!, input, opts.session);
-  let active: Agent = agents[0]!;
+  let active: Agent = startActive;
   let output: string | null = null;
   const maxSegments = 2 * registry.size + 2;
+  let seg = startSeg;
+  const save = (done: boolean, segNo: number, activeName: string, out: unknown = null): void => {
+    ckpt?.save({
+      run_id: parent,
+      messages,
+      active: activeName,
+      seen,
+      seg: segNo,
+      done,
+      output: out,
+    });
+  };
   try {
-    for (let seg = 0; seg < maxSegments; seg++) {
+    for (seg = startSeg; seg < maxSegments; seg++) {
       if (!seen.includes(active.name)) seen.push(active.name);
       const child = `${parent}:${active.name}#${seg}`;
       const { toolset, targets } = effective(active, registry);
       const a = active;
+      const segNo = seg;
+      const onTurn = ckpt ? (): void => save(false, segNo, a.name) : null;
       const { provider, create } = providerAndCreate(a);
       const res = await withScope(a, () =>
         trace(child, () =>
@@ -138,18 +195,21 @@ export async function runAgents(
               toolset,
               resolve: toolResolver(toolset),
               transferTargets: targets,
+              onTurn,
             }),
           ),
         ),
       );
       if (res.switchTo && registry.has(res.switchTo)) {
         active = registry.get(res.switchTo)!;
+        save(false, seg + 1, active.name);
         continue;
       }
       output = res.output;
       break;
     }
     await opts.session?.replace(messages);
+    save(true, seg, active.name, output);
     return new Result({
       output: parseOutput(output, active.outputType),
       steps,
