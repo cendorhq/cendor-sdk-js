@@ -35,36 +35,76 @@ const DOCS_DIRS = (
 // module, so a local `const agent = …` shadows these cleanly). API names are NOT here — they
 // get real-typed globals below, so a typo'd or misused API call still fails.
 const AMBIENT = [
-  'agent', 'msgs', 'audit', 'log', 'result', 'kb', 'conversation', 'retrievedDocs',
-  'systemPrompt', 'SYSTEM_PROMPT', 'userMsg', 'chatHistory', 'myAgent', 'issueRefundTool',
-  'getWeather', 'loadCases', 'containsPii', 'myPgvectorSearch', 'apiResponse', 'hugeJson',
-  'sourceCode', 'logs', 'drafter', 'editor', 'factchecker', 'summarizerA', 'summarizerB',
-  'a', 'b', 'c', 'application', 'openaiClient', 'ctx', 'fn', 'event', 'scorer', 'actual',
-  'expected', 'answer', 'refundTool', 'task', 'client', 'handle', 'session', 'store',
-  'model', 'messages',
+  'agent',
+  'msgs',
+  'audit',
+  'log',
+  'result',
+  'kb',
+  'conversation',
+  'retrievedDocs',
+  'systemPrompt',
+  'SYSTEM_PROMPT',
+  'userMsg',
+  'chatHistory',
+  'myAgent',
+  'issueRefundTool',
+  'getWeather',
+  'loadCases',
+  'containsPii',
+  'myPgvectorSearch',
+  'apiResponse',
+  'hugeJson',
+  'sourceCode',
+  'logs',
+  'drafter',
+  'editor',
+  'factchecker',
+  'summarizerA',
+  'summarizerB',
+  'a',
+  'b',
+  'c',
+  'application',
+  'openaiClient',
+  'ctx',
+  'fn',
+  'event',
+  'scorer',
+  'actual',
+  'expected',
+  'answer',
+  'refundTool',
+  'task',
+  'client',
+  'handle',
+  'session',
+  'store',
+  'model',
+  'messages',
 ];
 
 // API names later snippets on a page use without re-importing (the page's earlier snippet
 // imported them — standard docs convention). Typed via `typeof import(...)`, so the checker
 // still enforces the real signatures.
 const TYPED_GLOBALS = [
-  ["run", "@cendor/sdk"],
-  ["Agent", "@cendor/sdk"],
-  ["Session", "@cendor/sdk"],
-  ["evaluate", "@cendor/sdk"],
-  ["budget", "@cendor/tokenguard"],
-  ["track", "@cendor/tokenguard"],
-  ["report", "@cendor/tokenguard"],
-  ["estimate", "@cendor/tokenguard"],
-  ["Context", "@cendor/contextkit"],
-  ["Block", "@cendor/contextkit"],
-  ["instrument", "@cendor/core"],
-  ["prices", "@cendor/core"],
-  ["tokens", "@cendor/core"],
+  ['run', '@cendor/sdk'],
+  ['Agent', '@cendor/sdk'],
+  ['Session', '@cendor/sdk'],
+  ['evaluate', '@cendor/sdk'],
+  ['budget', '@cendor/tokenguard'],
+  ['track', '@cendor/tokenguard'],
+  ['report', '@cendor/tokenguard'],
+  ['estimate', '@cendor/tokenguard'],
+  ['Context', '@cendor/contextkit'],
+  ['Block', '@cendor/contextkit'],
+  ['instrument', '@cendor/core'],
+  ['prices', '@cendor/core'],
+  ['tokens', '@cendor/core'],
 ];
 
 // Whole-module namespaces used bare in continuation snippets (`cassette.using(...)`).
-const NAMESPACE_GLOBALS = [["cassette", "@cendor/cassette"]];
+const NAMESPACE_GLOBALS = [['cassette', '@cendor/cassette']];
 
 const SKIP_MARK = '<!-- ts-check: skip -->';
 const FENCE_OPEN = /^```(ts|typescript)\s*$/;
@@ -90,12 +130,18 @@ function extract(file) {
         const prev = lines[k].trim();
         if (prev === '') continue;
         seen++;
-        if (prev === SKIP_MARK) { skip = true; break; }
+        if (prev === SKIP_MARK) {
+          skip = true;
+          break;
+        }
       }
-      if (!skip) open = { startLine: i + 2, buf: [] }; // code starts on the next line (1-based)
+      if (!skip)
+        open = { startLine: i + 2, buf: [] }; // code starts on the next line (1-based)
       else {
         // consume the skipped fence
-        while (i + 1 < lines.length && !FENCE_CLOSE.test(lines[++i])) { /* skip */ }
+        while (i + 1 < lines.length && !FENCE_CLOSE.test(lines[++i])) {
+          /* skip */
+        }
       }
     }
   }
@@ -105,7 +151,9 @@ function extract(file) {
 // ---------------------------------------------------------------- collect
 for (const dir of DOCS_DIRS) {
   if (!existsSync(dir)) {
-    console.error(`docs dir not found: ${dir}\n(set DOCS_DIRS or check out the docs repos as siblings)`);
+    console.error(
+      `docs dir not found: ${dir}\n(set DOCS_DIRS or check out the docs repos as siblings)`,
+    );
     process.exit(2);
   }
 }
@@ -120,11 +168,17 @@ mkdirSync(workDir, { recursive: true });
 const manifest = []; // index -> { source, line }
 let n = 0;
 for (const dir of DOCS_DIRS) {
-  for (const name of readdirSync(dir).filter((f) => f.endsWith('.md')).sort()) {
+  for (const name of readdirSync(dir)
+    .filter((f) => f.endsWith('.md'))
+    .sort()) {
     const file = path.join(dir, name);
     for (const s of extract(file)) {
       const id = `snip_${String(n).padStart(3, '0')}`;
-      manifest.push({ id, source: `${path.basename(dir) === 'docs' ? path.basename(path.dirname(dir)) : dir}/docs/${name}`, line: s.line });
+      manifest.push({
+        id,
+        source: `${path.basename(dir) === 'docs' ? path.basename(path.dirname(dir)) : dir}/docs/${name}`,
+        line: s.line,
+      });
       writeFileSync(path.join(workDir, `${id}.ts`), `export {};\n${s.code}\n`);
       n++;
     }
@@ -138,7 +192,9 @@ writeFileSync(
     '// Ambient DATA identifiers docs snippets may use without declaring.',
     ...AMBIENT.map((x) => `declare const ${x}: any;`),
     '// API names with their REAL types (a later snippet may rely on an earlier import).',
-    ...TYPED_GLOBALS.map(([name, pkg]) => `declare const ${name}: typeof import('${pkg}').${name};`),
+    ...TYPED_GLOBALS.map(
+      ([name, pkg]) => `declare const ${name}: typeof import('${pkg}').${name};`,
+    ),
     ...NAMESPACE_GLOBALS.map(([name, pkg]) => `declare const ${name}: typeof import('${pkg}');`),
     "declare const OpenAI: typeof import('openai').default;",
     'declare function test(name: string, fn: (...args: unknown[]) => unknown): void;',
@@ -202,5 +258,7 @@ for (const line of out.split(/\r?\n/)) {
   // row-1 because of the injected `export {};` header line
   console.error(`${meta.source}:${meta.line + Number(m[2]) - 2} — ${m[4]}`);
 }
-console.error(`\n${count} snippet error(s). Fix the docs tab (or mark a signature block with ${SKIP_MARK}).`);
+console.error(
+  `\n${count} snippet error(s). Fix the docs tab (or mark a signature block with ${SKIP_MARK}).`,
+);
 process.exit(1);
