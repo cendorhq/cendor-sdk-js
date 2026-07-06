@@ -1,5 +1,11 @@
 # @cendor/sdk
 
+## 0.3.2
+
+### Patch Changes
+
+- a7b62c8: Plain-language README opener (the tagline npm renders at the top of the package page). Docs only.
+
 ## 0.3.1
 
 ### Patch Changes
