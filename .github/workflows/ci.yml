@@ -18,27 +18,15 @@ jobs:
         node: [20, 22]
     steps:
       - uses: actions/checkout@v4
-        with:
-          path: cendor-sdk-js
-
-      # Pre-publish: @cendor/* are linked from the sibling libs repo (see the pnpm.overrides in
-      # package.json). Check it out + build it so the links resolve. AFTER @cendor/* are published to
-      # npm, drop this step + the link overrides and let `pnpm install` pull them from the registry.
-      - uses: actions/checkout@v4
-        with:
-          repository: cendorhq/cendor-libs-js
-          path: cendor-libs-js
-          token: ${{ secrets.LIBS_REPO_TOKEN || secrets.GITHUB_TOKEN }}
-
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
           cache: pnpm
-          cache-dependency-path: cendor-sdk-js/pnpm-lock.yaml
-
-      - name: Build the linked @cendor/* libraries
-        run: cd cendor-libs-js && pnpm install --frozen-lockfile && pnpm build
-
-      - name: Build + lint + test the SDK
-        run: cd cendor-sdk-js && pnpm install --frozen-lockfile && pnpm build && pnpm lint && pnpm test
+      - run: pnpm install --frozen-lockfile # resolves @cendor/* from npm
+      - name: Typecheck + build
+        run: pnpm build
+      - name: Lint
+        run: pnpm lint
+      - name: Test (no network — stub clients + undici MockAgent)
+        run: pnpm test

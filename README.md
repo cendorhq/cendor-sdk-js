@@ -36,7 +36,7 @@ Cross-language parity with the Python SDK follows the
 ## Develop
 
 ```bash
-pnpm install   # links @cendor/* from ../cendor-libs-js (built) via pnpm overrides
+pnpm install   # resolves @cendor/* from npm
 pnpm build
 pnpm test      # no network — real openai/@anthropic-ai SDKs against undici MockAgent + stub clients
 ```

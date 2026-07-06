@@ -16,36 +16,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          path: cendor-sdk-js
-          fetch-depth: 0
-
-      # The SDK builds against the sibling @cendor/* libs (pnpm.overrides `link:`). Check them out +
-      # build so `pnpm install` resolves. The PUBLISHED @cendor/sdk keeps its clean `^x` ranges (the
-      # overrides live in the private root manifest, never in the package), so users install from npm.
-      # Needs a `LIBS_REPO_TOKEN` secret (repo-scoped PAT) while cendor-libs-js is private.
-      - uses: actions/checkout@v4
-        with:
-          repository: cendorhq/cendor-libs-js
-          path: cendor-libs-js
-          token: ${{ secrets.LIBS_REPO_TOKEN || secrets.GITHUB_TOKEN }}
-
+          fetch-depth: 0 # full history so changeset publish can tag
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: cendor-sdk-js/pnpm-lock.yaml
           registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile # resolves @cendor/* from npm
+      - run: pnpm build
 
-      - name: Build the linked @cendor/* libraries
-        run: cd cendor-libs-js && pnpm install --frozen-lockfile && pnpm build
-      - name: Install + build the SDK
-        run: cd cendor-sdk-js && pnpm install --frozen-lockfile && pnpm build
-
-      # Direct publish on push (no Version PR), mirroring the Python flow. Publish the libs first so the
-      # SDK's `^x` @cendor/* ranges resolve for users.
+      # Direct publish on push (no Version PR), mirroring the Python release flow: when changesets are
+      # present, `changeset version` bumps versions + writes CHANGELOGs, we commit that back to main
+      # ([skip ci]), then `changeset publish` publishes @cendor/sdk with provenance and tags the version.
       - name: Version + publish
-        working-directory: cendor-sdk-js
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

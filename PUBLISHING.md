@@ -1,47 +1,43 @@
 # Publishing `@cendor/sdk`
 
-`@cendor/sdk` depends on the six `@cendor/*` libraries, so **publish those first** (see
-`cendor-libs-js/PUBLISHING.md`). Then the SDK follows the identical flow.
+`@cendor/sdk` depends on the six `@cendor/*` libraries (published from `cendor-libs-js`), which it now
+installs **from the npm registry** like any consumer — no local links, no sibling checkout.
 
 ## Option A — automated with `NPM_TOKEN` (active) ✅
 
-`release.yml` is wired for token-based publishing. One-time setup — add **two** repo secrets
+`release.yml` is wired for token-based direct-publish-on-push. One-time setup — add **one** repo secret
 (GitHub → this repo → Settings → Secrets and variables → Actions):
 
-1. **`NPM_TOKEN`** — an npm **automation** token for the `cendor` org (same one used by the libs repo).
-2. **`LIBS_REPO_TOKEN`** — a GitHub PAT with `repo` scope on `cendorhq/cendor-libs-js`. The release
-   job checks out + builds the sibling libs so the SDK's `pnpm.overrides` `link:` deps resolve while
-   building. (Once `cendor-libs-js` is public, `GITHUB_TOKEN` suffices and this secret is optional.)
+- **`NPM_TOKEN`** — an npm **automation** token for the `cendor` org (same kind used by the libs repo).
 
-Then: land a changeset → push to `main` → merge the "Version Packages" PR → `@cendor/sdk` publishes
-with provenance, tagged `@cendor/sdk@<version>`.
+Then: land a changeset (`pnpm changeset`) → push to `main`. `release.yml` runs `changeset version`
+(bumps + CHANGELOGs, committed back with `[skip ci]`), then `changeset publish` publishes `@cendor/sdk`
+with provenance and tags `@cendor/sdk@<version>`. No Version PR (mirrors the Python release flow).
 
-**Why the link overrides don't leak into the published package:** they live in the *private root*
-`package.json`, never in `packages/sdk/package.json`, so the published `@cendor/sdk` keeps its clean
-`"@cendor/core": "^0.1.0"` (etc.) ranges — users install `@cendor/*` from npm. Publish the libs first
-so those ranges resolve for users.
+> Requires the org to allow GitHub Actions to run (Actions minutes/policy). Making the repo public
+> gives unlimited free Actions minutes.
+
+## Option B — tokenless trusted publishing (optional)
+
+Drop `NODE_AUTH_TOKEN` from `release.yml`, ensure the runner has npm ≥ 11.5, and configure the package's
+**Trusted Publisher** on npmjs.com (org `cendorhq`, repo `cendor-sdk-js`, workflow `release.yml`).
 
 ## Local development
-`@cendor/*` are linked from the sibling `../cendor-libs-js` repo via `pnpm.overrides` (`link:`) in
-`package.json` — so `pnpm install` works against the local, built libs. Build the libs first
-(`cd ../cendor-libs-js && pnpm build`).
 
-## First publish (once, after the libs are on npm)
+`pnpm install` resolves `@cendor/*` from npm (the published versions pinned in
+`packages/sdk/package.json`). To develop the SDK against **unpublished** local changes to a lib, use a
+temporary `pnpm.overrides` `link:` in the root `package.json` or `pnpm link`, then remove it before
+committing — the committed manifest always installs from the registry.
+
+## First / manual publish
+
 ```bash
-# with @cendor/* published, the link overrides resolve to real versions on a clean CI/registry install
 pnpm install --frozen-lockfile && pnpm build && pnpm test
-npm login
-npm publish --workspace @cendor/sdk --access public --provenance
+npm config set //registry.npmjs.org/:_authToken <npm-automation-token>   # bypasses 2FA
+pnpm exec changeset version    # if changesets are pending
+pnpm -r publish --access public --no-git-checks
+npm config delete //registry.npmjs.org/:_authToken                        # clean up after
 ```
 
-## Trusted publishing (one-time, npmjs.com → @cendor/sdk → Settings → Trusted Publisher)
-- Organization: `cendorhq` · Repository: `cendor-sdk-js` · Workflow: `release.yml` · Environment: blank.
-
-## Every release after
-Land a changeset (`pnpm changeset`), merge to `main`; `release.yml` opens a "Version Packages" PR;
-merging it publishes `@cendor/sdk` via OIDC with provenance and tags `@cendor/sdk@<version>`.
-
-## CI note
-The SDK's `ci.yml` checks out + builds the sibling `cendor-libs-js` (needs `secrets.LIBS_REPO_TOKEN`
-while that repo is private) so the `link:` deps resolve pre-publish. After the libs are on npm, drop
-that step and the `pnpm.overrides` block and install from the registry.
+Bump the `@cendor/*` dependency ranges in `packages/sdk/package.json` whenever the libs release a new
+minor/major, so `@cendor/sdk` resolves against versions that exist on npm.
