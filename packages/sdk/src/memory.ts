@@ -114,9 +114,12 @@ export class SummarizingSession extends Session {
     this.keepRecent = opts.keepRecent ?? 8;
   }
 
-  override replace(messages: Message[]): void {
+  override async replace(messages: Message[]): Promise<void> {
     super.replace(messages);
-    void this.maybeSummarize();
+    // Summarization is an LLM `run`; the runner awaits `replace`, so it finishes before the run
+    // returns — deterministic session state, correlated bus events, and surfaced errors (PY
+    // `SummarizingSession.replace` is synchronous + blocking).
+    await this.maybeSummarize();
   }
 
   async maybeSummarize(): Promise<void> {

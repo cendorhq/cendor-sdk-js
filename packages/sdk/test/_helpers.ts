@@ -106,6 +106,105 @@ export function stubAnthropic(response: unknown): {
   return { messages: { create: async (_p: unknown) => response } };
 }
 
+/** A stub OpenAI-shaped client that also records the kwargs each `create` received. */
+export function recordingOpenAI(responses: unknown[]): {
+  calls: unknown[];
+  client: { chat: { completions: { create: (p: unknown) => Promise<unknown> } } };
+} {
+  const calls: unknown[] = [];
+  let i = 0;
+  return {
+    calls,
+    client: {
+      chat: {
+        completions: {
+          create: async (p: unknown) => {
+            calls.push(p);
+            return responses[Math.min(i++, responses.length - 1)];
+          },
+        },
+      },
+    },
+  };
+}
+
+/** An OpenAI streaming text chunk (mirrors PY conftest `_text_chunk`). */
+export function streamTextChunk(
+  content: string | null,
+  opts: { finish?: string | null; usage?: unknown } = {},
+): unknown {
+  return {
+    choices: [
+      {
+        index: 0,
+        delta: { content, tool_calls: null },
+        finish_reason: opts.finish ?? null,
+      },
+    ],
+    usage: opts.usage ?? null,
+  };
+}
+
+/** An OpenAI streaming tool-call chunk (mirrors PY conftest `_tool_chunk`; args stream as fragments). */
+export function streamToolChunk(
+  idx: number,
+  opts: {
+    id?: string;
+    name?: string;
+    args?: string;
+    finish?: string | null;
+    usage?: unknown;
+  } = {},
+): unknown {
+  return {
+    choices: [
+      {
+        index: 0,
+        delta: {
+          content: null,
+          tool_calls: [
+            {
+              index: idx,
+              id: opts.id ?? null,
+              function: { name: opts.name ?? null, arguments: opts.args ?? null },
+            },
+          ],
+        },
+        finish_reason: opts.finish ?? null,
+      },
+    ],
+    usage: opts.usage ?? null,
+  };
+}
+
+/** A stub OpenAI-shaped streaming client where each `create({stream:true})` yields the next turn's chunks. */
+export function stubStreamTurns(turns: unknown[][]): {
+  chat: { completions: { create: (p: { stream?: boolean }) => Promise<unknown> } };
+} {
+  let i = 0;
+  return {
+    chat: {
+      completions: {
+        create: async (_p: { stream?: boolean }) => {
+          const chunks = turns[Math.min(i++, turns.length - 1)] ?? [];
+          return (async function* () {
+            for (const c of chunks) yield c;
+          })();
+        },
+      },
+    },
+  };
+}
+
+/** Usage payload for a stream's terminal chunk. */
+export function streamUsage(prompt = 5, completion = 2): unknown {
+  return {
+    prompt_tokens: prompt,
+    completion_tokens: completion,
+    total_tokens: prompt + completion,
+  };
+}
+
 /** Build an Anthropic Messages response object (the exact wire shape). */
 export function anthropicMessage(opts: {
   text?: string;

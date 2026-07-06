@@ -1,24 +1,30 @@
 /**
  * Orchestration — the TS port of `cendor.sdk.orchestration`. Handoff teams carry the canonical
  * conversation across provider switches via synthetic `transfer_to_<peer>` tools; every segment runs
- * under a child trace id `${parent}:${agent}#${seg}` so all steps form one correlated tree. Also
- * `sequential` (pipe), `parallel` / `parallelAsync` (fan-out), and `supervisor` (router).
+ * under a child trace id `${parent}:${agent}#${seg}` so all steps form one correlated tree. Per-agent
+ * governance rides the same seams: each segment is wrapped in `track({agent})` and, when the agent
+ * sets `maxUsd`, a per-agent `budget(...)`, and opens its own audit `decision()` on the shared
+ * `AuditLog`. Also `sequential` (pipe), `parallel` / `parallelAsync` (fan-out), and `supervisor`.
  */
-import { bus } from '@cendor/core';
+import { bus, trace } from '@cendor/core';
+import { track, withBudget } from '@cendor/tokenguard';
 import { z } from 'zod';
 import type { Agent, HandoffTarget } from './agent.js';
-import { assistantMessage, toolResultMessage } from './providers.js';
-import { callWithRetry } from './resilience.js';
 import {
-  buildCallKwargs,
-  injectRetrievedContext,
+  type EventQueue,
+  agentLoop,
+  createEventQueue,
   makeCollector,
   parseOutput,
+  prepareMessages,
+  providerAndCreate,
+  streamSegment,
   uuidHex,
+  withAuditDecision,
 } from './runner.js';
 import type { RunOptions } from './runner.js';
 import { type Tool, tool } from './tools.js';
-import { Result, RunComplete, type Step, type StreamEvent, TextDelta } from './types.js';
+import { Result, RunComplete, type Step, type StreamEvent } from './types.js';
 import type { Message } from './types.js';
 
 const TRANSFER = 'transfer_to_';
@@ -39,88 +45,51 @@ function targetName(t: HandoffTarget): string {
   return (t as Agent).name;
 }
 
-function resolveInput(input: string | Message | Message[]): Message[] {
-  if (typeof input === 'string') return [{ role: 'user', content: input }];
-  if (Array.isArray(input)) return [...input];
-  return [input];
+function userMessage(value: unknown): Message {
+  return { role: 'user', content: typeof value === 'string' ? value : String(value) };
 }
 
-function transferTools(
+/** Agent tools + synthetic transfer tools for its reachable handoff peers (PY `_effective`). */
+function effective(
   active: Agent,
   registry: Map<string, Agent>,
-): { tools: Tool[]; targets: Map<string, string> } {
-  const tools: Tool[] = [];
+): { toolset: Tool[]; targets: Map<string, string> } {
+  const toolset: Tool[] = [...active.tools];
   const targets = new Map<string, string>();
   for (const h of active.handoffs) {
     const name = targetName(h);
     if (name === active.name || !registry.has(name)) continue;
     const toolName = `${TRANSFER}${name}`;
     targets.set(toolName, name);
-    tools.push(
-      tool(() => `Transferring to the '${name}' agent.`, {
+    toolset.push(
+      tool(() => `Transferred to ${name}.`, {
         name: toolName,
         description: `Hand off the conversation to the '${name}' agent when it is better suited.`,
         parameters: z.object({ reason: z.string() }),
       }),
     );
   }
-  return { tools, targets };
+  return { toolset, targets };
 }
 
-async function runSegment(
-  active: Agent,
-  messages: Message[],
-  extraTools: Tool[],
-  transferTargets: Map<string, string>,
-  retry: RunOptions['retry'],
-): Promise<{ output: unknown; switchTo: string | null }> {
-  const provider = active.providerImpl;
-  const create = provider.createMethod(provider.client(active.clientConfig()));
-  const toolset = [...active.tools, ...extraTools];
-  const toolMap = new Map(toolset.map((t) => [t.name, t]));
-  for (let turn = 0; turn < active.maxTurns; turn++) {
-    const wire = await injectRetrievedContext(active, messages);
-    // buildCallKwargs uses agent.toolset; inline the augmented toolset here instead.
-    const base = buildCallKwargs(active, wire);
-    if (toolset.length > 0) {
-      base.tools = toolset.map((t) =>
-        provider.name === 'anthropic'
-          ? t.toAnthropic()
-          : provider.name === 'openai_responses'
-            ? t.toOpenaiResponses()
-            : t.toOpenai(),
-      );
+/** Per-agent governance: attribute spend to the agent + enforce its `maxUsd` cap (PY `_scope`). */
+function withScope<T>(agent: Agent, fn: () => Promise<T>): Promise<T> {
+  return track({ agent: agent.name }, () => {
+    if (agent.maxUsd != null) {
+      return withBudgetBlock(agent.maxUsd, fn);
     }
-    const response = await callWithRetry(() => create(base), retry ?? null);
-    const parsed = provider.parse(response);
-    messages.push(assistantMessage(parsed.content, parsed.toolCalls));
-    if (parsed.toolCalls.length === 0) {
-      return { output: parseOutput(parsed.content, active.outputType), switchTo: null };
-    }
-    let switchTo: string | null = null;
-    for (const tc of parsed.toolCalls) {
-      const target = transferTargets.get(tc.name);
-      if (target) {
-        switchTo = target;
-        messages.push(toolResultMessage(tc.id, tc.name, `Transferring to the '${target}' agent.`));
-        continue;
-      }
-      const t = toolMap.get(tc.name);
-      let result: string;
-      if (!t) result = `[error] unknown tool: ${tc.name}`;
-      else {
-        try {
-          const r = await t.invoke(tc.arguments);
-          result = typeof r === 'string' ? r : JSON.stringify(r);
-        } catch (err) {
-          result = `[error] ${(err as Error)?.message ?? String(err)}`;
-        }
-      }
-      messages.push(toolResultMessage(tc.id, tc.name, result));
-    }
-    if (switchTo) return { output: null, switchTo };
-  }
-  return { output: null, switchTo: null };
+    return fn();
+  });
+}
+
+async function withBudgetBlock<T>(usd: number, fn: () => Promise<T>): Promise<T> {
+  // onExceed:'block' never resolves to undefined (it throws BudgetExceeded), so the cast is sound.
+  return (await withBudget({ usd, onExceed: 'block' }, fn)) as T;
+}
+
+function toolResolver(toolset: Tool[]): (name: string) => Tool | null | undefined {
+  const map = new Map(toolset.map((t) => [t.name, t]));
+  return (name) => map.get(name);
 }
 
 function agentFromTrace(parent: string): (traceId: string) => string {
@@ -147,30 +116,42 @@ export async function runAgents(
   );
   bus.subscribe(sub);
   const seen: string[] = [];
-  const messages: Message[] = [...(opts.session?.snapshot() ?? []), ...resolveInput(input)];
-  let active: Agent | undefined = agents[0];
-  let output: unknown = null;
+  const messages = await prepareMessages(agents[0]!, input, opts.session);
+  let active: Agent = agents[0]!;
+  let output: string | null = null;
   const maxSegments = 2 * registry.size + 2;
   try {
-    const { trace } = await import('@cendor/core');
-    for (let seg = 0; seg < maxSegments && active; seg++) {
+    for (let seg = 0; seg < maxSegments; seg++) {
       if (!seen.includes(active.name)) seen.push(active.name);
-      const { tools, targets } = transferTools(active, registry);
-      const childTrace = `${parent}:${active.name}#${seg}`;
-      const activeAgent: Agent = active;
-      const res = await trace(childTrace, () =>
-        runSegment(activeAgent, messages, tools, targets, opts.retry ?? null),
+      const child = `${parent}:${active.name}#${seg}`;
+      const { toolset, targets } = effective(active, registry);
+      const a = active;
+      const { provider, create } = providerAndCreate(a);
+      const res = await withScope(a, () =>
+        trace(child, () =>
+          withAuditDecision(opts.audit, messages, a.name, a.model, child, () =>
+            agentLoop(a, messages, {
+              provider,
+              create,
+              maxTurns: opts.maxTurns ?? a.maxTurns,
+              retry: opts.retry ?? null,
+              toolset,
+              resolve: toolResolver(toolset),
+              transferTargets: targets,
+            }),
+          ),
+        ),
       );
       if (res.switchTo && registry.has(res.switchTo)) {
-        active = registry.get(res.switchTo);
+        active = registry.get(res.switchTo)!;
         continue;
       }
       output = res.output;
       break;
     }
-    opts.session?.replace(messages);
+    await opts.session?.replace(messages);
     return new Result({
-      output,
+      output: parseOutput(output, active.outputType),
       steps,
       traceId: parent,
       agents: seen,
@@ -191,21 +172,53 @@ export async function sequential(
   input: string | Message | Message[],
   opts: RunOptions = {},
 ): Promise<Result> {
-  const { run } = await import('./runner.js');
-  let current: string | Message | Message[] = input;
-  let last: Result | null = null;
-  const allSteps: Step[] = [];
+  const parent = uuidHex();
+  const { steps, sub } = makeCollector(
+    (t) => t.startsWith(`${parent}:`),
+    agentFromTrace(parent),
+    opts.onStep,
+  );
+  bus.subscribe(sub);
   const seen: string[] = [];
-  const messages: Message[] = [];
-  for (const a of agents) {
-    const r = await run(a, current, { audit: opts.audit ?? null, maxTurns: opts.maxTurns ?? null });
-    allSteps.push(...r.steps);
-    seen.push(a.name);
-    messages.push(...r.messages);
-    current = typeof r.output === 'string' ? r.output : JSON.stringify(r.output);
-    last = r;
+  const messagesAll: Message[] = [];
+  let current: unknown = input;
+  let output: string | null = null;
+  try {
+    for (let i = 0; i < agents.length; i++) {
+      const agent = agents[i]!;
+      seen.push(agent.name);
+      const child = `${parent}:${agent.name}#${i}`;
+      const msgs: Message[] = [userMessage(current)];
+      const { provider, create } = providerAndCreate(agent);
+      const res = await withScope(agent, () =>
+        trace(child, () =>
+          withAuditDecision(opts.audit, msgs, agent.name, agent.model, child, () =>
+            agentLoop(agent, msgs, {
+              provider,
+              create,
+              maxTurns: opts.maxTurns ?? agent.maxTurns,
+              retry: opts.retry ?? null,
+              toolset: agent.tools,
+              resolve: (n) => agent.getTool(n),
+              transferTargets: new Map(),
+            }),
+          ),
+        ),
+      );
+      output = res.output;
+      messagesAll.push(...msgs);
+      current = output;
+    }
+    return new Result({
+      output,
+      steps,
+      traceId: parent,
+      agents: seen,
+      messages: messagesAll,
+    });
+  } finally {
+    bus.unsubscribe(sub);
   }
-  return new Result({ output: last?.output ?? null, steps: allSteps, agents: seen, messages });
 }
 
 /** Run each agent on the same input (sequential execution); output is `{name: output}`. */
@@ -214,20 +227,29 @@ export async function parallel(
   input: string | Message | Message[],
   opts: RunOptions = {},
 ): Promise<Result> {
-  const { run } = await import('./runner.js');
-  const out: Record<string, unknown> = {};
-  const allSteps: Step[] = [];
-  for (const a of agents) {
-    const r = await run(a, input, { audit: opts.audit ?? null, maxTurns: opts.maxTurns ?? null });
-    out[a.name] = r.output;
-    allSteps.push(...r.steps);
+  const parent = uuidHex();
+  const { steps, sub } = makeCollector(
+    (t) => t.startsWith(`${parent}:`),
+    agentFromTrace(parent),
+    opts.onStep,
+  );
+  bus.subscribe(sub);
+  const outputs: Record<string, unknown> = {};
+  try {
+    for (let i = 0; i < agents.length; i++) {
+      const agent = agents[i]!;
+      outputs[agent.name] = await runOneAgent(agent, `${parent}:${agent.name}#${i}`, input, opts);
+    }
+    return new Result({
+      output: outputs,
+      steps,
+      traceId: parent,
+      agents: agents.map((a) => a.name),
+      messages: [],
+    });
+  } finally {
+    bus.unsubscribe(sub);
   }
-  return new Result({
-    output: out,
-    steps: allSteps,
-    agents: agents.map((a) => a.name),
-    messages: [],
-  });
 }
 
 /** Real concurrency via `Promise.all`; output is `{name: output}`. */
@@ -236,24 +258,59 @@ export async function parallelAsync(
   input: string | Message | Message[],
   opts: RunOptions = {},
 ): Promise<Result> {
-  const { run } = await import('./runner.js');
-  const results = await Promise.all(
-    agents.map((a) =>
-      run(a, input, { audit: opts.audit ?? null, maxTurns: opts.maxTurns ?? null }),
+  const parent = uuidHex();
+  const { steps, sub } = makeCollector(
+    (t) => t.startsWith(`${parent}:`),
+    agentFromTrace(parent),
+    opts.onStep,
+  );
+  bus.subscribe(sub);
+  try {
+    const pairs = await Promise.all(
+      agents.map(async (agent, i) => {
+        const out = await runOneAgent(agent, `${parent}:${agent.name}#${i}`, input, opts);
+        return [agent.name, out] as const;
+      }),
+    );
+    const outputs: Record<string, unknown> = {};
+    for (const [name, out] of pairs) outputs[name] = out;
+    return new Result({
+      output: outputs,
+      steps,
+      traceId: parent,
+      agents: agents.map((a) => a.name),
+      messages: [],
+    });
+  } finally {
+    bus.unsubscribe(sub);
+  }
+}
+
+/** Run a single agent under a given child trace id with per-agent scope + decision (fan-out helper). */
+async function runOneAgent(
+  agent: Agent,
+  child: string,
+  input: string | Message | Message[],
+  opts: RunOptions,
+): Promise<string | null> {
+  const msgs: Message[] = [userMessage(input)];
+  const { provider, create } = providerAndCreate(agent);
+  const res = await withScope(agent, () =>
+    trace(child, () =>
+      withAuditDecision(opts.audit, msgs, agent.name, agent.model, child, () =>
+        agentLoop(agent, msgs, {
+          provider,
+          create,
+          maxTurns: opts.maxTurns ?? agent.maxTurns,
+          retry: opts.retry ?? null,
+          toolset: agent.tools,
+          resolve: (n) => agent.getTool(n),
+          transferTargets: new Map(),
+        }),
+      ),
     ),
   );
-  const out: Record<string, unknown> = {};
-  const allSteps: Step[] = [];
-  results.forEach((r, i) => {
-    out[agents[i]!.name] = r.output;
-    allSteps.push(...r.steps);
-  });
-  return new Result({
-    output: out,
-    steps: allSteps,
-    agents: agents.map((a) => a.name),
-    messages: [],
-  });
+  return res.output;
 }
 
 /** Router pattern — the coordinator hands off to any sub-agent. */
@@ -269,13 +326,91 @@ export async function supervisor(
   return runAgents([coordinator, ...agents], input, opts);
 }
 
-/** Multi-agent streaming (v1.1). Runs the team and yields the final output as a `TextDelta` + `RunComplete`. */
+/**
+ * Multi-agent live streaming: stream each active agent's turns, switch active agent on a
+ * `transfer_to_<peer>` tool call, and emit a single terminal `RunComplete` with the aggregate
+ * `Result` (agents in first-seen order, steps from all segments, traceId = parent). Mirrors PY
+ * `stream_agents_sync`.
+ */
 export async function* streamAgents(
   agents: Agent[],
   input: string | Message | Message[],
   opts: Omit<RunOptions, 'onStep' | 'retry'> = {},
 ): AsyncGenerator<StreamEvent> {
-  const result = await runAgents(agents, input, opts);
-  if (typeof result.output === 'string' && result.output) yield new TextDelta(result.output);
-  yield new RunComplete(result);
+  const registry = new Map(agents.map((a) => [a.name, a]));
+  const parent = uuidHex();
+  const { steps, sub } = makeCollector(
+    (t) => t.startsWith(`${parent}:`),
+    agentFromTrace(parent),
+    null,
+  );
+  bus.subscribe(sub);
+  const queue: EventQueue<StreamEvent> = createEventQueue<StreamEvent>();
+  const seen: string[] = [];
+  const messages = await prepareMessages(agents[0]!, input, opts.session);
+  let active: Agent = agents[0]!;
+  let output: string | null = null;
+  const maxSegments = 2 * registry.size + 2;
+  const produce = async (): Promise<void> => {
+    try {
+      for (let seg = 0; seg < maxSegments; seg++) {
+        if (!seen.includes(active.name)) seen.push(active.name);
+        const child = `${parent}:${active.name}#${seg}`;
+        const { toolset, targets } = effective(active, registry);
+        const a = active;
+        const { provider, create } = providerAndCreate(a);
+        const res = await withScope(a, () =>
+          trace(child, () =>
+            withAuditDecision(opts.audit, messages, a.name, a.model, child, () =>
+              streamSegment(
+                a,
+                messages,
+                {
+                  provider,
+                  create,
+                  maxTurns: opts.maxTurns ?? a.maxTurns,
+                  toolset,
+                  resolve: toolResolver(toolset),
+                  transferTargets: targets,
+                },
+                (ev) => queue.push(ev),
+              ),
+            ),
+          ),
+        );
+        if (res.switchTo && registry.has(res.switchTo)) {
+          active = registry.get(res.switchTo)!;
+          continue;
+        }
+        output = res.output;
+        break;
+      }
+      await opts.session?.replace(messages);
+      queue.push(
+        new RunComplete(
+          new Result({
+            output: parseOutput(output, active.outputType),
+            steps,
+            traceId: parent,
+            agents: seen,
+            messages,
+            incomplete: output === null,
+          }),
+        ),
+      );
+      queue.close();
+    } catch (err) {
+      queue.fail(err);
+    }
+  };
+  const producer = produce();
+  try {
+    for await (const ev of queue) yield ev;
+  } finally {
+    bus.unsubscribe(sub);
+  }
+  await producer;
 }
+
+// re-export for downstream consumers that only import from orchestration
+export type { Step };

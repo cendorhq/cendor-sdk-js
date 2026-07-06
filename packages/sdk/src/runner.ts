@@ -7,13 +7,14 @@
  * orchestration (handoff team).
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type { AuditLog } from '@cendor/acttrace';
+import type { AuditLog, Decision } from '@cendor/acttrace';
 import { LLMCall, ToolCall, bus, installTraceContext, trace } from '@cendor/core';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { Agent } from './agent.js';
 import { type Provider, assistantMessage, toolResultMessage } from './providers.js';
+import { formatContext } from './rag.js';
 import { type RetryPolicy, callWithRetry } from './resilience.js';
-import type { JsonSchema } from './tools.js';
+import type { JsonSchema, Tool } from './tools.js';
 import {
   type Message,
   type ParsedResponse,
@@ -29,13 +30,29 @@ import {
 // Concurrency-correct trace correlation (server-side; overlapping runs stay isolated).
 installTraceContext(new AsyncLocalStorage<string>());
 
+/**
+ * The acttrace `Decision` handle for the run currently executing in this async context (or
+ * undefined). Human-in-the-loop tools (`./hitl`) read it to record `human_oversight` on the same
+ * audit chain the run is already correlated by. Set by {@link withAuditDecision}. The TS mirror of
+ * Python's `runner._active_decision` ContextVar.
+ */
+export const als = new AsyncLocalStorage<Decision>();
+
 export interface RunOptions {
-  session?: { snapshot(): Message[]; replace(messages: Message[]): void } | null;
+  session?: SessionLike | null;
   audit?: AuditLog | null;
   maxTurns?: number | null;
   retry?: RetryPolicy | null;
   onStep?: ((step: Step) => void) | null;
 }
+
+/** The minimal session surface the runner needs. `replace` may be async (awaited write-back). */
+export interface SessionLike {
+  snapshot(): Message[];
+  replace(messages: Message[]): void | Promise<void>;
+}
+
+const EMPTY_TARGETS: ReadonlyMap<string, string> = new Map();
 
 export function uuidHex(): string {
   return globalThis.crypto.randomUUID().replace(/-/g, '');
@@ -45,6 +62,11 @@ function resolveMessages(input: string | Message | Message[]): Message[] {
   if (typeof input === 'string') return [{ role: 'user', content: input }];
   if (Array.isArray(input)) return [...input];
   return [input];
+}
+
+function safeInput(input: unknown): unknown {
+  if (typeof input === 'string' || (input !== null && typeof input === 'object')) return input;
+  return String(input);
 }
 
 function isZodSchema(x: unknown): x is { parse(v: unknown): unknown } {
@@ -94,34 +116,77 @@ function stringifyResult(value: unknown): string {
   }
 }
 
-async function injectRetrievedContext(agent: Agent, messages: Message[]): Promise<Message[]> {
-  if (!agent.retriever) return messages;
-  const lastUser = [...messages].reverse().find((m) => m.role === 'user');
-  const query = lastUser && typeof lastUser.content === 'string' ? lastUser.content : '';
-  if (!query) return messages;
+function errString(err: unknown): string {
+  const name = (err as { constructor?: { name?: string } })?.constructor?.name ?? 'Error';
+  return `[error] ${name}: ${(err as Error)?.message ?? String(err)}`;
+}
+
+function textOfContent(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((p) => (p && typeof p === 'object' ? String((p as { text?: unknown }).text ?? '') : ''))
+      .filter(Boolean)
+      .join(' ');
+  }
+  return String(content ?? '');
+}
+
+/**
+ * "Always-on" RAG (matches PY `_inject_retrieved_context`): retrieve context for the latest user
+ * query and insert it as a system message before that turn — once per run, mutating `messages` in
+ * place so it persists into `Result.messages` / the session. No-op if there's no user turn or the
+ * retriever returns nothing.
+ */
+export async function injectRetrievedContext(agent: Agent, messages: Message[]): Promise<void> {
+  if (!agent.retriever) return;
+  let idx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]!.role === 'user') {
+      idx = i;
+      break;
+    }
+  }
+  if (idx < 0) return;
+  const query = textOfContent(messages[idx]!.content);
   const chunks = await agent.retriever(query);
-  if (!chunks || chunks.length === 0) return messages;
-  const ctx: Message = {
-    role: 'system',
-    content: `Relevant context:\n\n${chunks.join('\n\n---\n\n')}`,
-  };
-  // insert before the last user message
-  const idx = messages.lastIndexOf(lastUser as Message);
-  const out = [...messages];
-  out.splice(idx, 0, ctx);
-  return out;
+  if (chunks && chunks.length > 0) {
+    messages.splice(idx, 0, { role: 'system', content: formatContext(chunks) });
+  }
 }
 
-interface LoopContext {
-  runId: string;
-  agent: Agent;
-  provider: Provider;
-  create: (kwargs: Record<string, unknown>) => Promise<unknown>;
-  maxTurns: number;
-  retry: RetryPolicy | null;
+/** Resolve starting messages (session snapshot + input) and inject RAG context once (PY `_prepare_messages`). */
+export async function prepareMessages(
+  agent: Agent,
+  input: string | Message | Message[],
+  session: SessionLike | null | undefined,
+): Promise<Message[]> {
+  const messages: Message[] = [...(session?.snapshot() ?? []), ...resolveMessages(input)];
+  if (agent.retriever) await injectRetrievedContext(agent, messages);
+  return messages;
 }
 
-export { parseOutput, injectRetrievedContext, makeCollector };
+/**
+ * Optional context assembly to a token budget via contextkit (emits an audited AssemblyReport).
+ * Falls back to the raw messages if unset or if assembly can't handle the shape (PY `_assemble`).
+ */
+export async function assemble(agent: Agent, messages: Message[]): Promise<Message[]> {
+  if (!agent.contextBudget) return messages;
+  try {
+    const { Block, Context } = await import('@cendor/contextkit');
+    const ctx = new Context({
+      budgetTokens: agent.contextBudget,
+      model: agent.model,
+      reserveOutput: agent.maxTokens ?? 512,
+    });
+    ctx.add(new Block({ messages: messages as Record<string, unknown>[] }));
+    return (await ctx.assemble()) as unknown as Message[];
+  } catch {
+    return messages; // assembly is best-effort; degrade to raw messages
+  }
+}
+
+export { parseOutput, makeCollector };
 
 export function buildCallKwargs(agent: Agent, wire: Message[]): Record<string, unknown> {
   const outputSchema = schemaFromOutputType(agent.outputType);
@@ -142,45 +207,144 @@ export function buildCallKwargs(agent: Agent, wire: Message[]): Record<string, u
   return kwargs;
 }
 
-async function executeToolCalls(
-  agent: Agent,
-  parsed: ParsedResponse,
-  messages: Message[],
-): Promise<void> {
-  const results = await Promise.all(
-    parsed.toolCalls.map(async (tc) => {
-      const tool = agent.getTool(tc.name);
-      if (!tool) return `[error] unknown tool: ${tc.name}`;
-      try {
-        return stringifyResult(await tool.invoke(tc.arguments));
-      } catch (err) {
-        return `[error] ${(err as { constructor?: { name?: string } })?.constructor?.name ?? 'Error'}: ${(err as Error)?.message ?? String(err)}`;
-      }
-    }),
-  );
-  parsed.toolCalls.forEach((tc, i) =>
-    messages.push(toolResultMessage(tc.id, tc.name, results[i]!)),
-  );
+function toolPayload(provider: Provider, t: Tool): JsonSchema {
+  if (provider.name === 'anthropic') return t.toAnthropic();
+  if (provider.name === 'openai_responses') return t.toOpenaiResponses();
+  return t.toOpenai();
 }
 
-/** Run one agent's blocking loop, mutating `messages`. Returns the final output (or null if incomplete). */
-async function runLoop(ctx: LoopContext, messages: Message[]): Promise<unknown> {
-  const { agent } = ctx;
-  let output: unknown = null;
-  for (let turn = 0; turn < ctx.maxTurns; turn++) {
-    const wire = await injectRetrievedContext(agent, messages);
-    const kwargs = buildCallKwargs(agent, wire);
-    const response = await callWithRetry(() => ctx.create(kwargs), ctx.retry);
-    const parsed = ctx.provider.parse(response);
+/** Build call kwargs, overriding `tools` with the effective toolset (agent tools + transfer tools). */
+function buildKwargsWith(
+  agent: Agent,
+  wire: Message[],
+  toolset: Tool[],
+  provider: Provider,
+): Record<string, unknown> {
+  const kwargs = buildCallKwargs(agent, wire);
+  if (toolset.length > 0) kwargs.tools = toolset.map((t) => toolPayload(provider, t));
+  return kwargs;
+}
+
+/** `{provider, create}` for an agent — the instrumented client's create method. */
+export function providerAndCreate(agent: Agent): {
+  provider: Provider;
+  create: (kwargs: Record<string, unknown>) => Promise<unknown>;
+} {
+  const provider = agent.providerImpl;
+  const create = provider.createMethod(provider.client(agent.clientConfig()));
+  return { provider, create };
+}
+
+/** Shared config for one agent's turns. */
+export interface LoopConfig {
+  provider: Provider;
+  create: (kwargs: Record<string, unknown>) => Promise<unknown>;
+  maxTurns: number;
+  retry: RetryPolicy | null;
+  toolset: Tool[];
+  resolve: (name: string) => Tool | null | undefined;
+  transferTargets: ReadonlyMap<string, string>;
+}
+
+/**
+ * Run one agent's blocking turns over `messages` (mutated in place). Returns `{output, switchTo}` —
+ * `switchTo` is a handoff target name if the agent transferred control, else null. Mirrors PY
+ * `run_agent_sync` (assemble → call → tools → repeat). Output is the raw model content; callers apply
+ * `parseOutput`.
+ */
+export async function agentLoop(
+  agent: Agent,
+  messages: Message[],
+  cfg: LoopConfig,
+): Promise<{ output: string | null; switchTo: string | null }> {
+  const { provider } = cfg;
+  let output: string | null = null;
+  for (let turn = 0; turn < cfg.maxTurns; turn++) {
+    const wire = await assemble(agent, messages);
+    const kwargs = buildKwargsWith(agent, wire, cfg.toolset, provider);
+    const response = await callWithRetry(() => cfg.create(kwargs), cfg.retry);
+    const parsed = provider.parse(response);
     messages.push(assistantMessage(parsed.content, parsed.toolCalls));
     if (parsed.toolCalls.length > 0) {
-      await executeToolCalls(agent, parsed, messages);
+      let switchTo: string | null = null;
+      for (const tc of parsed.toolCalls) {
+        const result = await executeTool(cfg.resolve, tc.name, tc.arguments);
+        messages.push(toolResultMessage(tc.id, tc.name, result));
+        const target = cfg.transferTargets.get(tc.name);
+        if (target) switchTo = target;
+      }
+      if (switchTo) return { output: null, switchTo };
       continue;
     }
-    output = parseOutput(parsed.content, agent.outputType);
-    return output;
+    output = parsed.content;
+    return { output, switchTo: null };
   }
-  return output; // exhausted maxTurns without a final answer -> null -> incomplete
+  return { output, switchTo: null };
+}
+
+async function executeTool(
+  resolve: (name: string) => Tool | null | undefined,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<string> {
+  const tool = resolve(name);
+  if (!tool) return `[error] unknown tool: ${name}`;
+  try {
+    return stringifyResult(await tool.invoke(args));
+  } catch (err) {
+    return errString(err);
+  }
+}
+
+/**
+ * Stream one agent's turns, calling `emit` live for each event. Returns `{output, switchTo}`. Mirrors
+ * PY `stream_agent_sync`. Providers that reassemble a stream emit text incrementally; the rest fall
+ * back to a whole-response delta. No retry on the streaming path (matches Python).
+ */
+export async function streamSegment(
+  agent: Agent,
+  messages: Message[],
+  cfg: Omit<LoopConfig, 'retry'>,
+  emit: (ev: StreamEvent) => void,
+): Promise<{ output: string | null; switchTo: string | null }> {
+  const { provider } = cfg;
+  let output: string | null = null;
+  for (let turn = 0; turn < cfg.maxTurns; turn++) {
+    const wire = await assemble(agent, messages);
+    const kwargs = buildKwargsWith(agent, wire, cfg.toolset, provider);
+    let parsed: ParsedResponse;
+    if (provider.supportsStream) {
+      const stream = (await cfg.create({ ...kwargs, stream: true })) as AsyncIterable<unknown>;
+      const chunks: unknown[] = [];
+      for await (const chunk of stream) {
+        chunks.push(chunk);
+        const text = provider.streamText(chunk);
+        if (text) emit(new TextDelta(text));
+      }
+      parsed = provider.parseStream(chunks);
+    } else {
+      const response = await cfg.create(kwargs);
+      parsed = provider.parse(response);
+      if (parsed.content) emit(new TextDelta(parsed.content));
+    }
+    messages.push(assistantMessage(parsed.content, parsed.toolCalls));
+    if (parsed.toolCalls.length > 0) {
+      let switchTo: string | null = null;
+      for (const tc of parsed.toolCalls) {
+        emit(new ToolCallEvent(tc.name, tc.arguments, tc.id));
+        const result = await executeTool(cfg.resolve, tc.name, tc.arguments);
+        messages.push(toolResultMessage(tc.id, tc.name, result));
+        emit(new ToolResultEvent(tc.name, result));
+        const target = cfg.transferTargets.get(tc.name);
+        if (target) switchTo = target;
+      }
+      if (switchTo) return { output: null, switchTo };
+      continue;
+    }
+    output = parsed.content;
+    return { output, switchTo: null };
+  }
+  return { output, switchTo: null };
 }
 
 /**
@@ -214,15 +378,81 @@ function makeCollector(
   return { steps, sub };
 }
 
-async function withAuditDecision<T>(
+/**
+ * Open an acttrace `decision()` for the run, record the `{agent, model, trace_id}` bridge, and run
+ * `fn` inside both the decision's auto-tagging scope and the module-level {@link als} store (so HITL
+ * can read the active `Decision`). No-op wrapper when `audit` is null. Mirrors PY `_decision`.
+ */
+export async function withAuditDecision<T>(
   audit: AuditLog | null | undefined,
   input: unknown,
   agentName: string,
+  model: string,
+  traceId: string,
   fn: () => Promise<T>,
 ): Promise<T> {
   if (!audit) return fn();
-  return audit.decision(async () => fn(), { input, actor: agentName });
+  return audit.decision(
+    async (d) => {
+      try {
+        d.record({ agent: agentName, model, trace_id: traceId });
+      } catch {
+        /* recording is best-effort; never break a run */
+      }
+      return als.run(d, fn);
+    },
+    { input: safeInput(input), actor: agentName },
+  );
 }
+
+// --------------------------------------------------------------------------- live event queue
+
+/** A single-producer/single-consumer async queue backing the live streaming generators. */
+export interface EventQueue<T> {
+  push(item: T): void;
+  close(): void;
+  fail(err: unknown): void;
+  [Symbol.asyncIterator](): AsyncGenerator<T>;
+}
+
+export function createEventQueue<T>(): EventQueue<T> {
+  const items: T[] = [];
+  let wake: (() => void) | null = null;
+  let closed = false;
+  let failure: { err: unknown } | null = null;
+  const notify = (): void => {
+    const w = wake;
+    wake = null;
+    w?.();
+  };
+  return {
+    push(item: T): void {
+      items.push(item);
+      notify();
+    },
+    close(): void {
+      closed = true;
+      notify();
+    },
+    fail(err: unknown): void {
+      failure = { err };
+      closed = true;
+      notify();
+    },
+    async *[Symbol.asyncIterator](): AsyncGenerator<T> {
+      while (true) {
+        while (items.length > 0) yield items.shift() as T;
+        if (failure) throw failure.err;
+        if (closed) return;
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+        });
+      }
+    },
+  };
+}
+
+// --------------------------------------------------------------------------- Runner
 
 /** Drive one `Agent`. */
 export class Runner {
@@ -234,13 +464,9 @@ export class Runner {
   async run(input: string | Message | Message[]): Promise<Result> {
     const agent = this.agent;
     const runId = uuidHex();
-    const provider = agent.providerImpl;
-    const create = provider.createMethod(provider.client(agent.clientConfig()));
+    const { provider, create } = providerAndCreate(agent);
     const maxTurns = this.opts.maxTurns ?? agent.maxTurns;
-    const messages: Message[] = [
-      ...(this.opts.session?.snapshot() ?? []),
-      ...resolveMessages(input),
-    ];
+    const messages = await prepareMessages(agent, input, this.opts.session);
     const { steps, sub } = makeCollector(
       (t) => t === runId,
       () => agent.name,
@@ -248,22 +474,27 @@ export class Runner {
     );
     bus.subscribe(sub);
     try {
-      const output = await trace(runId, () =>
-        withAuditDecision(this.opts.audit, input, agent.name, () =>
-          runLoop(
-            { runId, agent, provider, create, maxTurns, retry: this.opts.retry ?? null },
-            messages,
-          ),
+      const res = await trace(runId, () =>
+        withAuditDecision(this.opts.audit, input, agent.name, agent.model, runId, () =>
+          agentLoop(agent, messages, {
+            provider,
+            create,
+            maxTurns,
+            retry: this.opts.retry ?? null,
+            toolset: agent.tools,
+            resolve: (n) => agent.getTool(n),
+            transferTargets: EMPTY_TARGETS,
+          }),
         ),
       );
-      this.opts.session?.replace(messages);
+      await this.opts.session?.replace(messages);
       return new Result({
-        output,
+        output: parseOutput(res.output, agent.outputType),
         steps,
         traceId: runId,
         agents: [agent.name],
         messages,
-        incomplete: output === null,
+        incomplete: res.output === null,
       });
     } finally {
       bus.unsubscribe(sub);
@@ -308,79 +539,73 @@ async function* streamImpl(
   yield* streamOne(agent, input, opts);
 }
 
-/** Single-agent streaming: native token streaming for OpenAI-family, whole-response fallback otherwise. */
+/**
+ * Single-agent live streaming: each `TextDelta` / `ToolCallEvent` / `ToolResultEvent` is yielded the
+ * instant it is produced, then a terminal `RunComplete`. Provider calls run inside the `trace(runId)`
+ * (+ optional audit `decision`) scope on a background producer, so emitted `LLMCall`/`ToolCall` bus
+ * events keep `traceId === runId`; a queue relays events to the consumer without a yield ever
+ * crossing the trace scope. Mirrors PY `stream_agent_sync`.
+ */
 export async function* streamOne(
   agent: Agent,
   input: string | Message | Message[],
   opts: Omit<RunOptions, 'onStep' | 'retry'> = {},
 ): AsyncGenerator<StreamEvent> {
   const runId = uuidHex();
-  const provider = agent.providerImpl;
-  const client = provider.client(agent.clientConfig());
-  const create = provider.createMethod(client);
+  const { provider, create } = providerAndCreate(agent);
   const maxTurns = opts.maxTurns ?? agent.maxTurns;
-  const messages: Message[] = [...(opts.session?.snapshot() ?? []), ...resolveMessages(input)];
+  const messages = await prepareMessages(agent, input, opts.session);
   const { steps, sub } = makeCollector(
     (t) => t === runId,
     () => agent.name,
     null,
   );
   bus.subscribe(sub);
-  let output: unknown = null;
+  const queue = createEventQueue<StreamEvent>();
+  const produce = async (): Promise<void> => {
+    try {
+      const res = await trace(runId, () =>
+        withAuditDecision(opts.audit, input, agent.name, agent.model, runId, () =>
+          streamSegment(
+            agent,
+            messages,
+            {
+              provider,
+              create,
+              maxTurns,
+              toolset: agent.tools,
+              resolve: (n) => agent.getTool(n),
+              transferTargets: EMPTY_TARGETS,
+            },
+            (ev) => queue.push(ev),
+          ),
+        ),
+      );
+      await opts.session?.replace(messages);
+      queue.push(
+        new RunComplete(
+          new Result({
+            output: parseOutput(res.output, agent.outputType),
+            steps,
+            traceId: runId,
+            agents: [agent.name],
+            messages,
+            incomplete: res.output === null,
+          }),
+        ),
+      );
+      queue.close();
+    } catch (err) {
+      queue.fail(err);
+    }
+  };
+  const producer = produce();
   try {
-    const events: StreamEvent[] = [];
-    const gen = trace(runId, async () => {
-      for (let turn = 0; turn < maxTurns; turn++) {
-        const wire = await injectRetrievedContext(agent, messages);
-        const kwargs = buildCallKwargs(agent, wire);
-        let parsed: ParsedResponse;
-        if (provider.supportsStream) {
-          kwargs.stream = true;
-          const stream = (await create(kwargs)) as AsyncIterable<unknown>;
-          const chunks: unknown[] = [];
-          for await (const chunk of stream) {
-            chunks.push(chunk);
-            const text = provider.streamText(chunk);
-            if (text) events.push(new TextDelta(text));
-          }
-          parsed = provider.parseStream(chunks);
-        } else {
-          const response = await create(kwargs);
-          parsed = provider.parse(response);
-          if (parsed.content) events.push(new TextDelta(parsed.content));
-        }
-        messages.push(assistantMessage(parsed.content, parsed.toolCalls));
-        if (parsed.toolCalls.length > 0) {
-          for (const tc of parsed.toolCalls)
-            events.push(new ToolCallEvent(tc.name, tc.arguments, tc.id));
-          await executeToolCalls(agent, parsed, messages);
-          for (const tc of parsed.toolCalls) {
-            const rmsg = messages.find((m) => m.role === 'tool' && m.tool_call_id === tc.id);
-            events.push(new ToolResultEvent(tc.name, String(rmsg?.content ?? '')));
-          }
-          continue;
-        }
-        output = parseOutput(parsed.content, agent.outputType);
-        return;
-      }
-    });
-    // Collect events as the trace runs. (trace returns a promise; events fill synchronously per await.)
-    await gen;
-    for (const ev of events) yield ev;
-    opts.session?.replace(messages);
-    yield new RunComplete(
-      new Result({
-        output,
-        steps,
-        traceId: runId,
-        agents: [agent.name],
-        messages,
-        incomplete: output === null,
-      }),
-    );
+    for await (const ev of queue) yield ev;
   } finally {
     bus.unsubscribe(sub);
   }
+  await producer;
 }
 
 export const run: RunFn = Object.assign(runImpl, { stream: streamImpl, astream: streamImpl });
