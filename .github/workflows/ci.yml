@@ -30,3 +30,45 @@ jobs:
         run: pnpm lint
       - name: Test (no network — stub clients + undici MockAgent)
         run: pnpm test
+
+  # Typecheck every ```ts snippet in the product docs (cendor-libs/docs + cendor-sdk/docs)
+  # against the real packages — tabs that aren't executed rot (PLAN-JS-TS §9).
+  # Needs DOCS_REPOS_TOKEN (a PAT with read access to cendorhq/cendor-libs and
+  # cendorhq/cendor-sdk) while those repos are private; the job skips itself when unset.
+  # After they go public, drop the token from both checkout steps.
+  docs-snippets:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for docs token
+        id: token
+        run: echo "have=${{ secrets.DOCS_REPOS_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        if: steps.token.outputs.have == 'true'
+      - uses: actions/checkout@v4
+        if: steps.token.outputs.have == 'true'
+        with:
+          repository: cendorhq/cendor-libs
+          token: ${{ secrets.DOCS_REPOS_TOKEN }}
+          path: _siblings/cendor-libs
+      - uses: actions/checkout@v4
+        if: steps.token.outputs.have == 'true'
+        with:
+          repository: cendorhq/cendor-sdk
+          token: ${{ secrets.DOCS_REPOS_TOKEN }}
+          path: _siblings/cendor-sdk
+      - uses: pnpm/action-setup@v4
+        if: steps.token.outputs.have == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.token.outputs.have == 'true'
+        with:
+          node-version: 22
+          cache: pnpm
+      - if: steps.token.outputs.have == 'true'
+        run: pnpm install --frozen-lockfile
+      - if: steps.token.outputs.have == 'true'
+        run: pnpm build
+      - name: Typecheck docs snippets
+        if: steps.token.outputs.have == 'true'
+        env:
+          DOCS_DIRS: ${{ github.workspace }}/_siblings/cendor-libs/docs:${{ github.workspace }}/_siblings/cendor-sdk/docs
+        run: pnpm check:docs
