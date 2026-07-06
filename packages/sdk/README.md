@@ -1,9 +1,6 @@
 # @cendor/sdk
 
-**A governed agent in ~10 lines** — the TypeScript port of
-[`cendor-sdk`](https://github.com/cendorhq/cendor-sdk). Governance (budgets, tamper-evident audit,
-PII redaction, record/replay) is the foundation, not a plugin. Hard-depends only on `@cendor/core`;
-the other `@cendor/*` libraries integrate through core's bus/interceptor seams.
+**Build an LLM agent with spending limits, a tamper-evident audit trail, PII redaction, and record/replay testing built in from the start** — a governed agent in about 10 lines. The TypeScript port of [`cendor-sdk`](https://github.com/cendorhq/cendor-sdk); governance is the foundation, not a plugin. Hard-depends only on `@cendor/core`; the other `@cendor/*` libraries integrate through core's bus/interceptor seams.
 
 ```ts
 import OpenAI from 'openai';
