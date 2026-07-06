@@ -6,12 +6,12 @@ governance (budgets, tamper-evident audit, PII redaction, record/replay) is the 
 plugin. ESM-only. Local-first. Apache-2.0.
 
 ```ts
-import { Agent, run, tool, budget, AuditLog, verify } from '@cendor/sdk';
+import { Agent, run, tool, withBudget, AuditLog, verify } from '@cendor/sdk';
 
 const audit = new AuditLog('refund-bot', { riskTier: 'high', path: 'audit.jsonl' });
 const agent = new Agent({ name: 'refund-bot', model: 'gpt-4o', tools: [refundTool] });
 
-const result = await budget({ usd: 0.5, onExceed: 'block' }, () =>
+const result = await withBudget({ usd: 0.5, onExceed: 'block' }, () =>
   run(agent, 'I want a refund for order #123', { audit }),
 );
 console.log(result.output, result.cost?.toString());
