@@ -1,6 +1,6 @@
 {
   "name": "@cendor/sdk",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A governed agent in ~10 lines — governance (budgets, tamper-evident audit, PII redaction, record/replay) is the foundation, not a plugin. The TypeScript port of cendor-sdk.",
   "type": "module",
   "license": "Apache-2.0",
