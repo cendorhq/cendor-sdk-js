@@ -54,8 +54,8 @@ importers:
         specifier: ^0.3.0
         version: 0.3.0
       '@cendor/cassette':
-        specifier: ^0.2.1
-        version: 0.2.1
+        specifier: ^0.2.4
+        version: 0.2.4
       '@cendor/contextkit':
         specifier: ^1.0.1
         version: 1.0.1(@cendor/squeeze@0.2.1)
@@ -146,8 +146,8 @@ packages:
     engines: {node: '>=18'}
     hasBin: true
 
-  '@cendor/cassette@0.2.1':
-    resolution: {integrity: sha512-ZuKVK3vOyfLCuWjKF1Gqv4qOdUwY2ePaxWfZwahDUvXCnhA+WdpucyMkIXU8mQbJ/plCli6JqUMdxQa1QhVxCQ==}
+  '@cendor/cassette@0.2.4':
+    resolution: {integrity: sha512-XpLitmr7bi7lWoBEzu6JHEAyqQKUQJC4AsrYymk60u8TdPC+oocC8MeFwNAQ2VyREAXHOd4ELnVtHztbs28BWg==}
     engines: {node: '>=18'}
 
   '@cendor/contextkit@1.0.1':
@@ -161,6 +161,15 @@ packages:
 
   '@cendor/core@0.3.0':
     resolution: {integrity: sha512-NN4Tqv32TtjX0MWBlQ/jNkX7mcyCQYjcvW3rKarT0fKheez/Sx1F+omyhXQwmVjJXw/zRNv9OQSFe/Gj07gLEQ==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      '@opentelemetry/api': '>=1'
+    peerDependenciesMeta:
+      '@opentelemetry/api':
+        optional: true
+
+  '@cendor/core@0.3.3':
+    resolution: {integrity: sha512-H3sBTs0jAHcYzHU6hVXqbkLvQ8/mO7ToZtbByZKlvCwhgqVfA/B/ZXcZegE9tGpOz7FQucSKNr4xwAaJTBbZUw==}
     engines: {node: '>=18'}
     peerDependencies:
       '@opentelemetry/api': '>=1'
@@ -1557,9 +1566,9 @@ snapshots:
     transitivePeerDependencies:
       - '@opentelemetry/api'
 
-  '@cendor/cassette@0.2.1':
+  '@cendor/cassette@0.2.4':
     dependencies:
-      '@cendor/core': 0.3.0
+      '@cendor/core': 0.3.3
     transitivePeerDependencies:
       - '@opentelemetry/api'
 
@@ -1572,6 +1581,11 @@ snapshots:
       - '@opentelemetry/api'
 
   '@cendor/core@0.3.0':
+    dependencies:
+      decimal.js: 10.6.0
+      js-tiktoken: 1.0.21
+
+  '@cendor/core@0.3.3':
     dependencies:
       decimal.js: 10.6.0
       js-tiktoken: 1.0.21

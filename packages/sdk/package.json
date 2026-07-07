@@ -24,7 +24,7 @@
   },
   "dependencies": {
     "@cendor/acttrace": "^0.3.0",
-    "@cendor/cassette": "^0.2.1",
+    "@cendor/cassette": "^0.2.4",
     "@cendor/contextkit": "^1.0.1",
     "@cendor/core": "^0.3.0",
     "@cendor/squeeze": "^0.2.1",
