@@ -66,8 +66,8 @@ importers:
         specifier: ^0.2.1
         version: 0.2.1
       '@cendor/tokenguard':
-        specifier: ^0.2.1
-        version: 0.2.1
+        specifier: ^0.2.4
+        version: 0.2.4
       zod:
         specifier: ^3.24.1
         version: 3.25.76
@@ -168,12 +168,21 @@ packages:
       '@opentelemetry/api':
         optional: true
 
+  '@cendor/core@0.3.3':
+    resolution: {integrity: sha512-H3sBTs0jAHcYzHU6hVXqbkLvQ8/mO7ToZtbByZKlvCwhgqVfA/B/ZXcZegE9tGpOz7FQucSKNr4xwAaJTBbZUw==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      '@opentelemetry/api': '>=1'
+    peerDependenciesMeta:
+      '@opentelemetry/api':
+        optional: true
+
   '@cendor/squeeze@0.2.1':
     resolution: {integrity: sha512-DIwxi34SdTzeKT/N6Sd1K330mpYFDYFzgyUHysbfBfFsNqd45NscyQAWqWh2S89bCN9ntftye5RJmsF8YP4wOw==}
     engines: {node: '>=18'}
 
-  '@cendor/tokenguard@0.2.1':
-    resolution: {integrity: sha512-pX5d9SIOrLjleYv0jqLM0bMLjqgD+Elzo1cAjXy7R6CHwdFIIe6Joqdo9TEIZ74BxxK9CL6xTpsEaf1Gf8EzQg==}
+  '@cendor/tokenguard@0.2.4':
+    resolution: {integrity: sha512-jj/AiLjPesDx+/mT1R5qd+qGfHuwY2/AddTaeg2la0+d8Ap66m4wnGjNPnK9jTE+PNZYmvWUe0OjqmRuGxCw4Q==}
     engines: {node: '>=18'}
     peerDependencies:
       '@opentelemetry/api': '>=1'
@@ -1576,6 +1585,11 @@ snapshots:
       decimal.js: 10.6.0
       js-tiktoken: 1.0.21
 
+  '@cendor/core@0.3.3':
+    dependencies:
+      decimal.js: 10.6.0
+      js-tiktoken: 1.0.21
+
   '@cendor/squeeze@0.2.1':
     dependencies:
       '@cendor/core': 0.3.0
@@ -1584,9 +1598,9 @@ snapshots:
     transitivePeerDependencies:
       - '@opentelemetry/api'
 
-  '@cendor/tokenguard@0.2.1':
+  '@cendor/tokenguard@0.2.4':
     dependencies:
-      '@cendor/core': 0.3.0
+      '@cendor/core': 0.3.3
     optionalDependencies:
       better-sqlite3: 12.11.1
 
