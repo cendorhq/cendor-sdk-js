@@ -135,6 +135,10 @@ canonical shape, so a run can **hand off between providers** without rewriting i
 | **Azure AI Foundry** | deployments via the OpenAI v1 endpoint (Chat + Responses) | `openai` |
 | **Foundry Local** | on-device, OpenAI-compatible | `openai` |
 
+> **Azure keyless auth:** pass `azureADTokenProvider` (an async `() => Promise<string>` token callback)
+> on the agent or client options instead of an API key to authenticate against Azure AI Foundry with
+> Microsoft Entra ID — the token is refreshed per request.
+
 > **Honest limit:** end-to-end token/cost capture for **Hugging Face / Ollama / Gemini / Bedrock**
 > activates once a matching `@cendor/core` release ships the `instrument()` detection for them;
 > OpenAI (Chat + Responses), Anthropic, Azure, and Foundry Local capture today. Runs on every provider
