@@ -203,6 +203,8 @@ export interface ClientOptions {
   apiKey?: string | null;
   baseUrl?: string | null;
   client?: unknown;
+  /** Azure keyless auth: a refreshing Entra-ID bearer-token provider, invoked per request. */
+  azureADTokenProvider?: (() => Promise<string>) | null;
 }
 
 /** The provider contract each backend implements. */
@@ -255,6 +257,8 @@ abstract class BaseProvider implements Provider {
 
   client(opts: ClientOptions): unknown {
     if (opts.client) return instrument(opts.client);
+    // A token-provider callback has no stable cache key, so build a fresh client each time.
+    if (opts.azureADTokenProvider) return instrument(this.rawClient(opts));
     const key = `${this.name}:${opts.apiKey ?? ''}:${opts.baseUrl ?? ''}`;
     let c = this.cache.get(key);
     if (c === undefined) {
@@ -998,8 +1002,24 @@ export class AzureFoundryProvider extends OpenAIChatProvider {
 
   override rawClient(opts: ClientOptions): unknown {
     const mod = require('openai');
-    const OpenAI = mod.OpenAI ?? mod.default ?? mod;
     const baseUrl = azureFoundryBaseUrl(opts);
+    // Keyless Entra-ID: openai's AzureOpenAI client refreshes the bearer token per request.
+    if (opts.azureADTokenProvider) {
+      const AzureOpenAI = mod.AzureOpenAI;
+      if (!AzureOpenAI) {
+        throw new Error(
+          'azureADTokenProvider needs the AzureOpenAI client from openai>=4.53 — upgrade the `openai` peer dependency.',
+        );
+      }
+      const apiVersion =
+        process.env.OPENAI_API_VERSION ?? process.env.AZURE_OPENAI_API_VERSION ?? 'preview';
+      return new AzureOpenAI({
+        azureADTokenProvider: opts.azureADTokenProvider,
+        apiVersion,
+        ...(baseUrl ? { baseURL: baseUrl } : {}),
+      });
+    }
+    const OpenAI = mod.OpenAI ?? mod.default ?? mod;
     const apiKey =
       opts.apiKey ??
       process.env.AZURE_OPENAI_API_KEY ??

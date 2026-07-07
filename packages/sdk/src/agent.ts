@@ -32,6 +32,8 @@ export interface AgentOptions {
   baseURL?: string | null;
   /** A pre-built provider SDK client (instrumented on adoption). */
   client?: unknown;
+  /** Azure keyless auth: a refreshing Entra-ID bearer-token provider, invoked per request. */
+  azureADTokenProvider?: (() => Promise<string>) | null;
 }
 
 export class Agent {
@@ -53,6 +55,7 @@ export class Agent {
   readonly apiKey: string | null;
   readonly baseURL: string | null;
   readonly client: unknown;
+  readonly azureADTokenProvider: (() => Promise<string>) | null;
   private readonly toolMap: Map<string, Tool>;
 
   constructor(opts: AgentOptions) {
@@ -74,6 +77,7 @@ export class Agent {
     this.apiKey = opts.apiKey ?? null;
     this.baseURL = opts.baseURL ?? null;
     this.client = opts.client ?? null;
+    this.azureADTokenProvider = opts.azureADTokenProvider ?? null;
     this.toolMap = new Map(this.tools.map((t) => [t.name, t]));
   }
 
@@ -86,8 +90,18 @@ export class Agent {
   getTool(name: string): Tool | null {
     return this.toolMap.get(name) ?? null;
   }
-  clientConfig(): { apiKey: string | null; baseUrl: string | null; client: unknown } {
-    return { apiKey: this.apiKey, baseUrl: this.baseURL, client: this.client };
+  clientConfig(): {
+    apiKey: string | null;
+    baseUrl: string | null;
+    client: unknown;
+    azureADTokenProvider: (() => Promise<string>) | null;
+  } {
+    return {
+      apiKey: this.apiKey,
+      baseUrl: this.baseURL,
+      client: this.client,
+      azureADTokenProvider: this.azureADTokenProvider,
+    };
   }
   addTool(t: Tool | ToolFn): void {
     const tool = asTool(t);
