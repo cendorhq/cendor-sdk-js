@@ -12,7 +12,9 @@ installs **from the npm registry** like any consumer — no local links, no sibl
 
 Then: land a changeset (`pnpm changeset`) → push to `main`. `release.yml` runs `changeset version`
 (bumps + CHANGELOGs, committed back with `[skip ci]`), then `changeset publish` publishes `@cendor/sdk`
-with provenance and tags `@cendor/sdk@<version>`. No Version PR (mirrors the Python release flow).
+and tags `@cendor/sdk@<version>`. No Version PR (mirrors the Python release flow). **Provenance is
+off** (`NPM_CONFIG_PROVENANCE: "false"` in `release.yml`) because npm/sigstore rejects a private
+source repo (`E422`); flip it to `"true"` once the repo is public.
 
 > Requires the org to allow GitHub Actions to run (Actions minutes/policy). Making the repo public
 > gives unlimited free Actions minutes.
