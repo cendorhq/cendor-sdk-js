@@ -57,8 +57,8 @@ importers:
         specifier: ^0.2.1
         version: 0.2.1
       '@cendor/contextkit':
-        specifier: ^1.0.1
-        version: 1.0.1(@cendor/squeeze@0.2.1)
+        specifier: ^1.0.4
+        version: 1.0.4(@cendor/squeeze@0.2.1)
       '@cendor/core':
         specifier: ^0.3.0
         version: 0.3.0
@@ -150,17 +150,26 @@ packages:
     resolution: {integrity: sha512-ZuKVK3vOyfLCuWjKF1Gqv4qOdUwY2ePaxWfZwahDUvXCnhA+WdpucyMkIXU8mQbJ/plCli6JqUMdxQa1QhVxCQ==}
     engines: {node: '>=18'}
 
-  '@cendor/contextkit@1.0.1':
-    resolution: {integrity: sha512-LkvOPM1hs/DahnaFixwzolY1BZNpoDnAYb7/3QMidMao4xcdwXJqb3dTDZxb1+Fc1euFHpzeR/sLboalHxz58g==}
+  '@cendor/contextkit@1.0.4':
+    resolution: {integrity: sha512-kfAfdEW3LYPIionrOkY3TJIW/P0cdPoFwv0Y3teH32zME07SnU1Cu+7uNpvtZqfBEkW9lqNzmb3iWGUVXfizyg==}
     engines: {node: '>=18'}
     peerDependencies:
-      '@cendor/squeeze': ^0.2.1
+      '@cendor/squeeze': ^0.2.4
     peerDependenciesMeta:
       '@cendor/squeeze':
         optional: true
 
   '@cendor/core@0.3.0':
     resolution: {integrity: sha512-NN4Tqv32TtjX0MWBlQ/jNkX7mcyCQYjcvW3rKarT0fKheez/Sx1F+omyhXQwmVjJXw/zRNv9OQSFe/Gj07gLEQ==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      '@opentelemetry/api': '>=1'
+    peerDependenciesMeta:
+      '@opentelemetry/api':
+        optional: true
+
+  '@cendor/core@0.3.3':
+    resolution: {integrity: sha512-H3sBTs0jAHcYzHU6hVXqbkLvQ8/mO7ToZtbByZKlvCwhgqVfA/B/ZXcZegE9tGpOz7FQucSKNr4xwAaJTBbZUw==}
     engines: {node: '>=18'}
     peerDependencies:
       '@opentelemetry/api': '>=1'
@@ -1563,15 +1572,20 @@ snapshots:
     transitivePeerDependencies:
       - '@opentelemetry/api'
 
-  '@cendor/contextkit@1.0.1(@cendor/squeeze@0.2.1)':
+  '@cendor/contextkit@1.0.4(@cendor/squeeze@0.2.1)':
     dependencies:
-      '@cendor/core': 0.3.0
+      '@cendor/core': 0.3.3
     optionalDependencies:
       '@cendor/squeeze': 0.2.1
     transitivePeerDependencies:
       - '@opentelemetry/api'
 
   '@cendor/core@0.3.0':
+    dependencies:
+      decimal.js: 10.6.0
+      js-tiktoken: 1.0.21
+
+  '@cendor/core@0.3.3':
     dependencies:
       decimal.js: 10.6.0
       js-tiktoken: 1.0.21
