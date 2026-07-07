@@ -293,7 +293,7 @@ export class OpenAIChatProvider extends BaseProvider {
     const mod = require('openai');
     const OpenAI = mod.OpenAI ?? mod.default ?? mod;
     return new OpenAI({
-      apiKey: opts.apiKey ?? process.env.OPENAI_API_KEY ?? 'sk-cendor-sdk-placeholder',
+      apiKey: opts.apiKey ?? process.env.OPENAI_API_KEY ?? 'cendor-sdk-placeholder-no-key',
       ...(opts.baseUrl ? { baseURL: opts.baseUrl } : {}),
     });
   }
@@ -633,7 +633,7 @@ export class AnthropicProvider extends BaseProvider {
     const mod = require('@anthropic-ai/sdk');
     const Anthropic = mod.Anthropic ?? mod.default ?? mod;
     return new Anthropic({
-      apiKey: opts.apiKey ?? process.env.ANTHROPIC_API_KEY ?? 'sk-ant-cendor-sdk-placeholder',
+      apiKey: opts.apiKey ?? process.env.ANTHROPIC_API_KEY ?? 'cendor-sdk-placeholder-no-key',
       ...(opts.baseUrl ? { baseURL: opts.baseUrl } : {}),
     });
   }
