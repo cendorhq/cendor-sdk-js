@@ -1,7 +1,7 @@
 // Typecheck every TypeScript snippet in the product docs against the real packages.
 //
 // The docs are single-source, per-product (cendor-libs/docs + cendor-sdk/docs) with
-// `<!-- tab: TypeScript -->` panels; tabs that aren't executed rot (PLAN-JS-TS §9). This
+// `<!-- tab: TypeScript -->` panels; tabs that aren't executed rot. This
 // harness extracts every ```ts fence from both docs trees, wraps each in its own module with
 // a shared ambient-globals file (docs snippets legitimately use free identifiers like `agent`
 // or `msgs`), and runs `tsc` over the lot:
