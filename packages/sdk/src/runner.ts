@@ -12,6 +12,7 @@ import { LLMCall, ToolCall, bus, installTraceContext, trace } from '@cendor/core
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { Agent } from './agent.js';
 import { type Checkpointer, asCheckpointer } from './checkpoint.js';
+import { withScope } from './governance.js';
 import { type Provider, assistantMessage, toolResultMessage } from './providers.js';
 import { formatContext } from './rag.js';
 import { type RetryPolicy, callWithRetry } from './resilience.js';
@@ -470,12 +471,27 @@ export class Runner {
 
   async run(input: string | Message | Message[]): Promise<Result> {
     const agent = this.agent;
+    const ckpt = asCheckpointer(this.opts.checkpoint);
+    const saved = ckpt?.load() ?? null;
+    // Done-resume short-circuit: a completed checkpoint replays its stored result WITHOUT minting a
+    // run or re-entering agentLoop (no model call, no tool re-run). Steps are empty (no bus events);
+    // the persisted messages/output are returned as-is. PY parity.
+    if (saved?.done) {
+      return new Result({
+        // Stored `output` is the raw model content persisted at completion (always string | null).
+        output: parseOutput((saved.output ?? null) as string | null, agent.outputType),
+        steps: [],
+        traceId: saved.run_id ?? '',
+        agents: [agent.name],
+        messages: [...(saved.messages ?? [])],
+        incomplete: saved.output == null,
+      });
+    }
     // Mint a fresh runId even on resume (single-agent parity with PY runner._start).
     const runId = uuidHex();
-    const ckpt = asCheckpointer(this.opts.checkpoint);
     const { provider, create } = providerAndCreate(agent);
     const maxTurns = this.opts.maxTurns ?? agent.maxTurns;
-    const resume = ckpt?.resumableMessages() ?? null;
+    const resume = saved && !saved.done ? [...(saved.messages ?? [])] : null;
     const messages =
       resume !== null ? resume : await prepareMessages(agent, input, this.opts.session);
     const onTurn = ckpt
@@ -488,18 +504,22 @@ export class Runner {
     );
     bus.subscribe(sub);
     try {
-      const res = await trace(runId, () =>
-        withAuditDecision(this.opts.audit, input, agent.name, agent.model, runId, () =>
-          agentLoop(agent, messages, {
-            provider,
-            create,
-            maxTurns,
-            retry: this.opts.retry ?? null,
-            toolset: agent.tools,
-            resolve: (n) => agent.getTool(n),
-            transferTargets: EMPTY_TARGETS,
-            onTurn,
-          }),
+      // Per-agent scope (attribution + `maxUsd` cap) wraps the single-agent path too, mirroring the
+      // orchestrator's `runOneAgent` — previously `maxUsd` was silently dropped here.
+      const res = await withScope(agent, () =>
+        trace(runId, () =>
+          withAuditDecision(this.opts.audit, input, agent.name, agent.model, runId, () =>
+            agentLoop(agent, messages, {
+              provider,
+              create,
+              maxTurns,
+              retry: this.opts.retry ?? null,
+              toolset: agent.tools,
+              resolve: (n) => agent.getTool(n),
+              transferTargets: EMPTY_TARGETS,
+              onTurn,
+            }),
+          ),
         ),
       );
       await this.opts.session?.replace(messages);
@@ -580,20 +600,23 @@ export async function* streamOne(
   const queue = createEventQueue<StreamEvent>();
   const produce = async (): Promise<void> => {
     try {
-      const res = await trace(runId, () =>
-        withAuditDecision(opts.audit, input, agent.name, agent.model, runId, () =>
-          streamSegment(
-            agent,
-            messages,
-            {
-              provider,
-              create,
-              maxTurns,
-              toolset: agent.tools,
-              resolve: (n) => agent.getTool(n),
-              transferTargets: EMPTY_TARGETS,
-            },
-            (ev) => queue.push(ev),
+      // Per-agent scope (attribution + `maxUsd` cap) wraps the single-agent stream path too.
+      const res = await withScope(agent, () =>
+        trace(runId, () =>
+          withAuditDecision(opts.audit, input, agent.name, agent.model, runId, () =>
+            streamSegment(
+              agent,
+              messages,
+              {
+                provider,
+                create,
+                maxTurns,
+                toolset: agent.tools,
+                resolve: (n) => agent.getTool(n),
+                transferTargets: EMPTY_TARGETS,
+              },
+              (ev) => queue.push(ev),
+            ),
           ),
         ),
       );

@@ -7,10 +7,10 @@
  * `AuditLog`. Also `sequential` (pipe), `parallel` / `parallelAsync` (fan-out), and `supervisor`.
  */
 import { bus, trace } from '@cendor/core';
-import { track, withBudget } from '@cendor/tokenguard';
 import { z } from 'zod';
 import type { Agent, HandoffTarget } from './agent.js';
-import { type Checkpointer, asCheckpointer } from './checkpoint.js';
+import { type CheckpointState, asCheckpointer } from './checkpoint.js';
+import { withScope } from './governance.js';
 import {
   type EventQueue,
   agentLoop,
@@ -73,21 +73,6 @@ function effective(
   return { toolset, targets };
 }
 
-/** Per-agent governance: attribute spend to the agent + enforce its `maxUsd` cap (PY `_scope`). */
-function withScope<T>(agent: Agent, fn: () => Promise<T>): Promise<T> {
-  return track({ agent: agent.name }, () => {
-    if (agent.maxUsd != null) {
-      return withBudgetBlock(agent.maxUsd, fn);
-    }
-    return fn();
-  });
-}
-
-async function withBudgetBlock<T>(usd: number, fn: () => Promise<T>): Promise<T> {
-  // onExceed:'block' never resolves to undefined (it throws BudgetExceeded), so the cast is sound.
-  return (await withBudget({ usd, onExceed: 'block' }, fn)) as T;
-}
-
 function toolResolver(toolset: Tool[]): (name: string) => Tool | null | undefined {
   const map = new Map(toolset.map((t) => [t.name, t]));
   return (name) => map.get(name);
@@ -105,10 +90,10 @@ function agentFromTrace(parent: string): (traceId: string) => string {
 /**
  * Resolve `(parent, messages, active, seen, startSeg)` from an unfinished checkpoint, or start fresh.
  * Multi-agent resume PRESERVES the saved run_id (the parent trace id) and ignores the new input (PY
- * `_resume_state`).
+ * `_resume_state`). A DONE checkpoint is handled by the caller's short-circuit before this runs.
  */
 async function resumeState(
-  ckpt: Checkpointer | null,
+  state: CheckpointState | null,
   agents: Agent[],
   input: string | Message | Message[],
   session: RunOptions['session'],
@@ -120,7 +105,6 @@ async function resumeState(
   startSeg: number;
 }> {
   const registry = new Map(agents.map((a) => [a.name, a]));
-  const state = ckpt?.load() ?? null;
   if (state && !state.done) {
     return {
       parent: state.run_id || uuidHex(),
@@ -147,13 +131,29 @@ export async function runAgents(
 ): Promise<Result> {
   const ckpt = asCheckpointer(opts.checkpoint);
   const registry = new Map(agents.map((a) => [a.name, a]));
+  const saved = ckpt?.load() ?? null;
+  // Done-resume short-circuit: a completed checkpoint replays its stored result WITHOUT minting a
+  // run or re-entering any segment (no model call, no tool re-run). Steps are empty (no bus events);
+  // the persisted messages/output are returned as-is. PY parity with the single-agent short-circuit.
+  if (saved?.done) {
+    const finalAgent = registry.get(saved.active ?? '') ?? agents[0]!;
+    return new Result({
+      // Stored `output` is the raw model content persisted at completion (always string | null).
+      output: parseOutput((saved.output ?? null) as string | null, finalAgent.outputType),
+      steps: [],
+      traceId: saved.run_id ?? '',
+      agents: [...(saved.seen ?? [])],
+      messages: [...(saved.messages ?? [])],
+      incomplete: saved.output == null,
+    });
+  }
   const {
     parent,
     messages,
     active: startActive,
     seen,
     startSeg,
-  } = await resumeState(ckpt, agents, input, opts.session);
+  } = await resumeState(saved, agents, input, opts.session);
   const { steps, sub } = makeCollector(
     (t) => t.startsWith(`${parent}:`),
     agentFromTrace(parent),

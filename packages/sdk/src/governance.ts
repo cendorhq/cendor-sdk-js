@@ -5,8 +5,10 @@ import { type AuditLog, type Policy, guard as acttraceGuard } from '@cendor/actt
  * A bare `run()` needs none of this; governance rides `@cendor/core`'s bus + interceptor seams.
  */
 import { Dec, addInterceptor, prices, removeInterceptor } from '@cendor/core';
+import { BudgetExceeded, budget, configure, report, track, withBudget } from '@cendor/tokenguard';
+import type { Agent } from './agent.js';
 
-export { budget, withBudget, track, report, configure, BudgetExceeded } from '@cendor/tokenguard';
+export { budget, withBudget, track, report, configure, BudgetExceeded };
 export { AuditLog, verify, Policy, PolicyViolation } from '@cendor/acttrace';
 export { trace, currentTraceId } from '@cendor/core';
 
@@ -59,4 +61,24 @@ export function registerModelPrice(model: string, opts: RegisterModelPriceOption
   if (opts.cached != null) rates.cached = d(opts.cached);
   if (opts.cacheWrite != null) rates.cache_write = d(opts.cacheWrite);
   prices.register(model, rates);
+}
+
+/**
+ * Per-agent governance: attribute spend to the agent (`track({agent})`) + enforce its `maxUsd` cap
+ * (a pre-flight `budget(onExceed:'block')`) when set. The single shared helper the orchestrator wraps
+ * around every segment AND the single-agent `Runner`/`streamOne` wrap around their run — so `maxUsd`
+ * binds on every path, not just multi-agent. PY parity: `orchestration._scope`.
+ */
+export function withScope<T>(agent: Agent, fn: () => Promise<T>): Promise<T> {
+  return track({ agent: agent.name }, () => {
+    if (agent.maxUsd != null) {
+      return withBudgetBlock(agent.maxUsd, fn);
+    }
+    return fn();
+  });
+}
+
+async function withBudgetBlock<T>(usd: number, fn: () => Promise<T>): Promise<T> {
+  // onExceed:'block' never resolves to undefined (it throws BudgetExceeded), so the cast is sound.
+  return (await withBudget({ usd, onExceed: 'block' }, fn)) as T;
 }

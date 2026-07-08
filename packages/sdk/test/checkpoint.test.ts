@@ -110,4 +110,112 @@ describe('@cendor/sdk — checkpoint / resume', () => {
     expect(result.messages.some((m) => m.content === 'IGNORED-NEW-INPUT')).toBe(false);
     expect(result.output).toBe('resumed');
   });
+
+  it('single-agent resume of a DONE checkpoint replays the stored result — 0 model + 0 tool calls', async () => {
+    const path = ckptPath('done.ckpt.json');
+    let modelCalls = 0;
+    let toolRuns = 0;
+    const weather = tool(
+      (args: { city: string }) => {
+        toolRuns++;
+        return `Sunny in ${args.city}`;
+      },
+      {
+        name: 'get_weather',
+        description: 'Current weather for a city.',
+        parameters: z.object({ city: z.string() }),
+      },
+    );
+    // A completed run's checkpoint: final answer + the already-run tool trail, persisted with done:true.
+    writeFileSync(
+      path,
+      JSON.stringify({
+        run_id: 'done-run',
+        messages: [
+          { role: 'user', content: 'weather in Paris?' },
+          {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call_0',
+                type: 'function',
+                function: { name: 'get_weather', arguments: '{"city":"Paris"}' },
+              },
+            ],
+          },
+          { role: 'tool', tool_call_id: 'call_0', name: 'get_weather', content: 'Sunny in Paris' },
+          { role: 'assistant', content: "It's sunny in Paris." },
+        ],
+        done: true,
+        output: "It's sunny in Paris.",
+      }),
+    );
+    const client = {
+      chat: {
+        completions: {
+          create: async () => {
+            modelCalls++;
+            return openaiChat({ content: 'SHOULD NOT RUN' });
+          },
+        },
+      },
+    };
+    const agent = new Agent({
+      name: 'assistant',
+      model: 'gpt-4o',
+      tools: [weather],
+      instructions: 'Use tools.',
+      client,
+    });
+
+    const result = await run(agent, 'weather in Paris?', { checkpoint: path });
+
+    expect(result.output).toBe("It's sunny in Paris."); // stored output replayed
+    expect(modelCalls).toBe(0); // model NOT re-invoked
+    expect(toolRuns).toBe(0); // completed tool NOT re-run
+    expect(result.steps).toHaveLength(0); // no bus events on a short-circuit
+    expect(result.llmSteps).toHaveLength(0);
+    expect(result.toolSteps).toHaveLength(0);
+    expect(result.messages.some((m) => m.role === 'tool')).toBe(true); // persisted trail preserved
+  });
+
+  it('multi-agent resume of a DONE checkpoint replays the stored result — 0 model + 0 tool calls', async () => {
+    const path = ckptPath('team-done.ckpt.json');
+    let modelCalls = 0;
+    writeFileSync(
+      path,
+      JSON.stringify({
+        run_id: 'team-done',
+        messages: [
+          { role: 'user', content: 'hi' },
+          { role: 'assistant', content: 'final team answer' },
+        ],
+        active: 'a',
+        seen: ['a'],
+        seg: 0,
+        done: true,
+        output: 'final team answer',
+      }),
+    );
+    const client = {
+      chat: {
+        completions: {
+          create: async () => {
+            modelCalls++;
+            return openaiChat({ content: 'SHOULD NOT RUN' });
+          },
+        },
+      },
+    };
+    const a = new Agent({ name: 'a', model: 'gpt-4o', client });
+
+    const result = await run([a], 'IGNORED-NEW-INPUT', { checkpoint: path });
+
+    expect(result.output).toBe('final team answer'); // stored output replayed
+    expect(modelCalls).toBe(0); // no segment re-entered
+    expect(result.steps).toHaveLength(0); // no bus events on a short-circuit
+    expect(result.agents).toEqual(['a']); // seen list restored
+    expect(result.messages.some((m) => m.content === 'final team answer')).toBe(true);
+  });
 });
