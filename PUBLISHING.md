@@ -3,14 +3,6 @@
 `@cendor/sdk` depends on the seven `@cendor/*` libraries (published from `cendor-libs-js`), which it now
 installs **from the npm registry** like any consumer — no local links, no sibling checkout.
 
-> ⚠️ **Release-gate step — drop the temporary `@cendor/guardrails` override.** Until `@cendor/guardrails`
-> is published, the root `package.json` carries a **TEMPORARY** `pnpm.overrides` block (the `//pnpm-overrides`
-> comment marks it) pointing `@cendor/guardrails` at a packed tarball of the sibling build (and pinning
-> `@cendor/core` so one core resolves). **Before publishing** `@cendor/sdk@0.5.0`: publish `@cendor/guardrails@0.1.0`
-> from `cendor-libs-js` first, then **delete the entire `pnpm` block + its `//pnpm-overrides` comment** and
-> run `pnpm install` so `@cendor/sdk` resolves the published `@cendor/guardrails@^0.1.0` (and core) from npm.
-> Then verify a fresh `npm i @cendor/sdk` resolves exactly ONE `@cendor/core`.
-
 ## Option A — automated with `NPM_TOKEN` (active) ✅
 
 `release.yml` is wired for token-based direct-publish-on-push. One-time setup — add **one** repo secret

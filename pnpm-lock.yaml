@@ -4,10 +4,6 @@ settings:
   autoInstallPeers: false
   excludeLinksFromLockfile: false
 
-overrides:
-  '@cendor/guardrails': file:../cendor-libs-js/packages/guardrails/cendor-guardrails-0.0.0.tgz
-  '@cendor/core': 0.4.1
-
 importers:
 
   .:
@@ -64,11 +60,11 @@ importers:
         specifier: ^1.0.5
         version: 1.0.5(@cendor/squeeze@0.2.5)
       '@cendor/core':
-        specifier: 0.4.1
+        specifier: ^0.4.0
         version: 0.4.1
       '@cendor/guardrails':
-        specifier: file:../../../cendor-libs-js/packages/guardrails/cendor-guardrails-0.0.0.tgz
-        version: file:../cendor-libs-js/packages/guardrails/cendor-guardrails-0.0.0.tgz
+        specifier: ^0.1.0
+        version: 0.1.0
       '@cendor/squeeze':
         specifier: ^0.2.5
         version: 0.2.5
@@ -183,9 +179,8 @@ packages:
       '@opentelemetry/api':
         optional: true
 
-  '@cendor/guardrails@file:../cendor-libs-js/packages/guardrails/cendor-guardrails-0.0.0.tgz':
-    resolution: {integrity: sha512-EJvEOwA6YlakuiOS6GbkA8nPMDeA6+2TLT4GJWBXw+y4EPa5CkZg59G2POPuK2DvYr6qppKuxQx+qpwY6cmJrA==, tarball: file:../cendor-libs-js/packages/guardrails/cendor-guardrails-0.0.0.tgz}
-    version: 0.0.0
+  '@cendor/guardrails@0.1.0':
+    resolution: {integrity: sha512-A1/fketzL6z/PwomgOjYkCBBP0Qq7HL/Nion+TcV+uQtf+JbTGE2nRRhrrgJLy9bPVil3Y1jH+UaeUOUwFHvkg==}
     engines: {node: '>=18'}
 
   '@cendor/squeeze@0.2.5':
@@ -1661,7 +1656,7 @@ snapshots:
       decimal.js: 10.6.0
       js-tiktoken: 1.0.21
 
-  '@cendor/guardrails@file:../cendor-libs-js/packages/guardrails/cendor-guardrails-0.0.0.tgz':
+  '@cendor/guardrails@0.1.0':
     dependencies:
       '@cendor/core': 0.4.1
     transitivePeerDependencies:

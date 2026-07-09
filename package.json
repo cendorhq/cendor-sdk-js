@@ -37,12 +37,5 @@
     "undici": "^7.0.0",
     "vitest": "^3.2.6"
   },
-  "license": "Apache-2.0",
-  "//pnpm-overrides": "TEMPORARY — @cendor/guardrails is not on npm yet. Points at a packed tarball of the sibling build (a plain `file:<dir>` can't resolve guardrails' `@cendor/core: workspace:^`; `pnpm pack` rewrites it to a concrete range). Rebuild the tarball with `pnpm --dir ../cendor-libs-js/packages/guardrails pack --pack-destination .`. The @cendor/core pin unifies the tarball's core with the SDK's so ONE core resolves (no split-brain — the SDK lockfile pinned 0.4.0 while the tarball wants ^0.4.1). DROP THIS ENTIRE `pnpm` block in the release-gate commit before pushing (published @cendor/guardrails@^0.1.0 then resolves from npm, and npm dedupes core normally). See PUBLISHING.md.",
-  "pnpm": {
-    "overrides": {
-      "@cendor/guardrails": "file:../cendor-libs-js/packages/guardrails/cendor-guardrails-0.0.0.tgz",
-      "@cendor/core": "0.4.1"
-    }
-  }
+  "license": "Apache-2.0"
 }
