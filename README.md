@@ -16,7 +16,7 @@ A thin, model-agnostic agent SDK where governance is the *foundation*, not a plu
 *model-agnostic · ESM-only · local-first · offline by default*
 
 > **The second door into [Cendor](https://github.com/cendorhq/cendor-libs).** One brand, two doors:
-> compose the [six libraries](https://github.com/cendorhq/cendor-libs-js) beneath *your* framework, or
+> compose the [seven libraries](https://github.com/cendorhq/cendor-libs-js) beneath *your* framework, or
 > take the whole loop — governed — with this SDK. The `budget` / `guard` / `AuditLog` / … you import
 > here are the **real** `@cendor/*` library objects, re-exported for one-import convenience.
 
