@@ -51,8 +51,8 @@ importers:
   packages/sdk:
     dependencies:
       '@cendor/acttrace':
-        specifier: ^0.4.0
-        version: 0.4.0
+        specifier: ^0.5.0
+        version: 0.5.0
       '@cendor/cassette':
         specifier: ^0.2.5
         version: 0.2.5
@@ -144,8 +144,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@cendor/acttrace@0.4.0':
-    resolution: {integrity: sha512-5fh1jVgl+prvelJsC1dHkUxi1GqxEXpeXdews4tATMQd2kNgWOMPJ6kQK8tRNxG026bvHRshpupEvqjDFHFLHg==}
+  '@cendor/acttrace@0.5.0':
+    resolution: {integrity: sha512-gj5T3wGcZrJiXoA9blUW8usZdjqS+qTkHZWk/ne3w4Hb3MeXh//dPeA2hFLGx+5w8tvFuqOEsldhLEow+HUYOQ==}
     engines: {node: '>=18'}
     hasBin: true
     peerDependencies:
@@ -1628,7 +1628,7 @@ snapshots:
   '@biomejs/cli-win32-x64@1.9.4':
     optional: true
 
-  '@cendor/acttrace@0.4.0':
+  '@cendor/acttrace@0.5.0':
     dependencies:
       '@cendor/core': 0.4.1
     transitivePeerDependencies:
