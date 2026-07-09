@@ -8,10 +8,12 @@
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { AuditLog, Decision } from '@cendor/acttrace';
-import { LLMCall, ToolCall, bus, installTraceContext, trace } from '@cendor/core';
+import { LLMCall, ToolCall, bus, currentTraceId, installTraceContext, trace } from '@cendor/core';
+import type { Guardrail } from '@cendor/guardrails';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { Agent } from './agent.js';
 import { type Checkpointer, asCheckpointer } from './checkpoint.js';
+import * as gate from './gate.js';
 import { withScope } from './governance.js';
 import { type Provider, assistantMessage, toolResultMessage } from './providers.js';
 import { formatContext } from './rag.js';
@@ -48,6 +50,11 @@ export interface RunOptions {
   onStep?: ((step: Step) => void) | null;
   /** A checkpoint path or `Checkpointer` — persists the conversation after each turn so a crashed run resumes. */
   checkpoint?: Checkpointer | string | null;
+  /**
+   * Per-run guardrail override — replaces the agent's own list for this run (`[]` disables gating).
+   * For a team, applies to every segment; omit to use each agent's `Agent({ guardrails: [...] })`.
+   */
+  guardrails?: Guardrail[] | null;
 }
 
 /** The minimal session surface the runner needs. `replace` may be async (awaited write-back). */
@@ -250,6 +257,8 @@ export interface LoopConfig {
   transferTargets: ReadonlyMap<string, string>;
   /** Checkpoint hook (PY `on_turn`): called with `messages` after each turn — after a tool turn and after the final answer. */
   onTurn?: ((messages: Message[]) => void) | null;
+  /** The effective guardrails for this run (agent's own, or the per-run override). */
+  guardrails?: Guardrail[];
 }
 
 /**
@@ -264,7 +273,10 @@ export async function agentLoop(
   cfg: LoopConfig,
 ): Promise<{ output: string | null; switchTo: string | null }> {
   const { provider } = cfg;
+  const guardrails = cfg.guardrails ?? [];
+  const traceId = currentTraceId();
   let output: string | null = null;
+  await gate.gateInput(guardrails, agent.name, messages, traceId); // pre-spend: block throws / redact
   for (let turn = 0; turn < cfg.maxTurns; turn++) {
     const wire = await assemble(agent, messages);
     const kwargs = buildKwargsWith(agent, wire, cfg.toolset, provider);
@@ -274,7 +286,14 @@ export async function agentLoop(
     if (parsed.toolCalls.length > 0) {
       let switchTo: string | null = null;
       for (const tc of parsed.toolCalls) {
-        const result = await executeTool(cfg.resolve, tc.name, tc.arguments);
+        const result = await executeTool(
+          cfg.resolve,
+          tc.name,
+          tc.arguments,
+          guardrails,
+          agent.name,
+          traceId,
+        );
         messages.push(toolResultMessage(tc.id, tc.name, result));
         const target = cfg.transferTargets.get(tc.name);
         if (target) switchTo = target;
@@ -283,7 +302,7 @@ export async function agentLoop(
       if (switchTo) return { output: null, switchTo };
       continue;
     }
-    output = parsed.content;
+    output = await gate.gateOutput(guardrails, agent.name, parsed.content, traceId); // block throws
     cfg.onTurn?.(messages);
     return { output, switchTo: null };
   }
@@ -294,14 +313,27 @@ async function executeTool(
   resolve: (name: string) => Tool | null | undefined,
   name: string,
   args: Record<string, unknown>,
+  guardrails: Guardrail[] = [],
+  agentName = '',
+  traceId = '',
 ): Promise<string> {
+  const { blocked, args: gatedArgs } = await gate.gateToolCall(
+    guardrails,
+    agentName,
+    name,
+    args,
+    traceId,
+  );
+  if (blocked !== null) return blocked; // tool_call guardrail blocked — don't run the tool
   const tool = resolve(name);
   if (!tool) return `[error] unknown tool: ${name}`;
+  let result: string;
   try {
-    return stringifyResult(await tool.invoke(args));
+    result = stringifyResult(await tool.invoke(gatedArgs));
   } catch (err) {
     return errString(err);
   }
+  return gate.gateToolOutput(guardrails, agentName, name, result, traceId);
 }
 
 /**
@@ -316,7 +348,10 @@ export async function streamSegment(
   emit: (ev: StreamEvent) => void,
 ): Promise<{ output: string | null; switchTo: string | null }> {
   const { provider } = cfg;
+  const guardrails = cfg.guardrails ?? [];
+  const traceId = currentTraceId();
   let output: string | null = null;
+  await gate.gateInput(guardrails, agent.name, messages, traceId); // pre-spend: block throws / redact
   for (let turn = 0; turn < cfg.maxTurns; turn++) {
     const wire = await assemble(agent, messages);
     const kwargs = buildKwargsWith(agent, wire, cfg.toolset, provider);
@@ -340,7 +375,14 @@ export async function streamSegment(
       let switchTo: string | null = null;
       for (const tc of parsed.toolCalls) {
         emit(new ToolCallEvent(tc.name, tc.arguments, tc.id));
-        const result = await executeTool(cfg.resolve, tc.name, tc.arguments);
+        const result = await executeTool(
+          cfg.resolve,
+          tc.name,
+          tc.arguments,
+          guardrails,
+          agent.name,
+          traceId,
+        );
         messages.push(toolResultMessage(tc.id, tc.name, result));
         emit(new ToolResultEvent(tc.name, result));
         const target = cfg.transferTargets.get(tc.name);
@@ -349,7 +391,8 @@ export async function streamSegment(
       if (switchTo) return { output: null, switchTo };
       continue;
     }
-    output = parsed.content;
+    // output stage runs after the deltas already streamed — a block throws here (post-hoc)
+    output = await gate.gateOutput(guardrails, agent.name, parsed.content, traceId);
     return { output, switchTo: null };
   }
   return { output, switchTo: null };
@@ -518,6 +561,7 @@ export class Runner {
               resolve: (n) => agent.getTool(n),
               transferTargets: EMPTY_TARGETS,
               onTurn,
+              guardrails: gate.effective(agent, this.opts.guardrails),
             }),
           ),
         ),
@@ -614,6 +658,7 @@ export async function* streamOne(
                 toolset: agent.tools,
                 resolve: (n) => agent.getTool(n),
                 transferTargets: EMPTY_TARGETS,
+                guardrails: gate.effective(agent, opts.guardrails),
               },
               (ev) => queue.push(ev),
             ),

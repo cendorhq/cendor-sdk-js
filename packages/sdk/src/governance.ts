@@ -11,6 +11,16 @@ import type { Agent } from './agent.js';
 export { budget, withBudget, track, report, configure, BudgetExceeded };
 export { AuditLog, verify, Policy, PolicyViolation } from '@cendor/acttrace';
 export { trace, currentTraceId } from '@cendor/core';
+// The deterministic guardrails gate — the real @cendor/guardrails objects. `defineGuardrail` is the
+// TS analogue of Python's `@guardrail`; kept distinct from `guard` above (the acttrace-policy scope).
+export {
+  GuardrailDecision,
+  GuardrailTripped,
+  Verdict,
+  defineGuardrail,
+  rules,
+} from '@cendor/guardrails';
+export type { Action, Check, Context, Guardrail, Stage } from '@cendor/guardrails';
 
 export interface GuardOptions {
   policy?: Policy | null;

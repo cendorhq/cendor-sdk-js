@@ -2,6 +2,7 @@
  * `Agent` — the config object for a governed agent. The TS port of `cendor.sdk.agent.Agent`
  * (camelCase fields). Holds no state; the runner drives it.
  */
+import type { Guardrail } from '@cendor/guardrails';
 import { type Provider, resolveProvider } from './providers.js';
 import { type Tool, type ToolFn, asTool } from './tools.js';
 
@@ -26,6 +27,14 @@ export interface AgentOptions {
   /** Always-on RAG: `(query) => chunks`. */
   retriever?: ((query: string) => string[] | Promise<string[]>) | null;
   handoffs?: HandoffTarget[];
+  /**
+   * `@cendor/guardrails` `Guardrail`s gating this agent's four stages (`input` / `tool_call` /
+   * `tool_output` / `output`). A `block` fails closed (throws `GuardrailTripped`, or — at
+   * `tool_call` — returns a `[blocked …]` tool result so the loop continues); `redact` rewrites the
+   * payload; `flag` records. Every decision is recorded on the audit chain. Override per run with
+   * `run(agent, input, { guardrails: [...] })`. Per-agent scoped (unlike the process-global `guard`).
+   */
+  guardrails?: Guardrail[];
   /** Per-agent USD spend cap (orchestrator-enforced). */
   maxUsd?: number | null;
   apiKey?: string | null;
@@ -51,6 +60,7 @@ export class Agent {
   readonly extra: Record<string, unknown>;
   readonly retriever: ((query: string) => string[] | Promise<string[]>) | null;
   readonly handoffs: HandoffTarget[];
+  readonly guardrails: Guardrail[];
   readonly maxUsd: number | null;
   readonly apiKey: string | null;
   readonly baseURL: string | null;
@@ -73,6 +83,7 @@ export class Agent {
     this.extra = opts.extra ?? {};
     this.retriever = opts.retriever ?? null;
     this.handoffs = opts.handoffs ?? [];
+    this.guardrails = opts.guardrails ?? [];
     this.maxUsd = opts.maxUsd ?? null;
     this.apiKey = opts.apiKey ?? null;
     this.baseURL = opts.baseURL ?? null;

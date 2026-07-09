@@ -4,6 +4,10 @@ settings:
   autoInstallPeers: false
   excludeLinksFromLockfile: false
 
+overrides:
+  '@cendor/guardrails': file:../cendor-libs-js/packages/guardrails/cendor-guardrails-0.0.0.tgz
+  '@cendor/core': 0.4.1
+
 importers:
 
   .:
@@ -60,8 +64,11 @@ importers:
         specifier: ^1.0.5
         version: 1.0.5(@cendor/squeeze@0.2.5)
       '@cendor/core':
-        specifier: ^0.4.0
-        version: 0.4.0
+        specifier: 0.4.1
+        version: 0.4.1
+      '@cendor/guardrails':
+        specifier: file:../../../cendor-libs-js/packages/guardrails/cendor-guardrails-0.0.0.tgz
+        version: file:../cendor-libs-js/packages/guardrails/cendor-guardrails-0.0.0.tgz
       '@cendor/squeeze':
         specifier: ^0.2.5
         version: 0.2.5
@@ -164,8 +171,8 @@ packages:
       '@cendor/squeeze':
         optional: true
 
-  '@cendor/core@0.4.0':
-    resolution: {integrity: sha512-Ac+GRrQ2H7VEXYIifZgdfOTlaMhNGpMdtIGAxzmpVNR8gXEHcNRwyhJ7UkgzIXfdvUakb5TIyhrAh58G9AUn+w==}
+  '@cendor/core@0.4.1':
+    resolution: {integrity: sha512-LuIISLoshUisVGl2kSgbJZzZgOBSYLC/OVDfVLoxf081K/Kwh6ifFtSQjZen1r8BkMAd07ZRMxGypQ71juvoww==}
     engines: {node: '>=18'}
     peerDependencies:
       '@langchain/core': '>=0.3'
@@ -175,6 +182,11 @@ packages:
         optional: true
       '@opentelemetry/api':
         optional: true
+
+  '@cendor/guardrails@file:../cendor-libs-js/packages/guardrails/cendor-guardrails-0.0.0.tgz':
+    resolution: {integrity: sha512-EJvEOwA6YlakuiOS6GbkA8nPMDeA6+2TLT4GJWBXw+y4EPa5CkZg59G2POPuK2DvYr6qppKuxQx+qpwY6cmJrA==, tarball: file:../cendor-libs-js/packages/guardrails/cendor-guardrails-0.0.0.tgz}
+    version: 0.0.0
+    engines: {node: '>=18'}
 
   '@cendor/squeeze@0.2.5':
     resolution: {integrity: sha512-HBfcUrtfySDHDW4j6G0oiGJB48isKIg83A1/pUxUGsY1/U2TnMkFXtC1/nG+3VQNXavKtAsc4tyITyvH0XliwQ==}
@@ -1623,35 +1635,42 @@ snapshots:
 
   '@cendor/acttrace@0.4.0':
     dependencies:
-      '@cendor/core': 0.4.0
+      '@cendor/core': 0.4.1
     transitivePeerDependencies:
       - '@langchain/core'
       - '@opentelemetry/api'
 
   '@cendor/cassette@0.2.5':
     dependencies:
-      '@cendor/core': 0.4.0
+      '@cendor/core': 0.4.1
     transitivePeerDependencies:
       - '@langchain/core'
       - '@opentelemetry/api'
 
   '@cendor/contextkit@1.0.5(@cendor/squeeze@0.2.5)':
     dependencies:
-      '@cendor/core': 0.4.0
+      '@cendor/core': 0.4.1
     optionalDependencies:
       '@cendor/squeeze': 0.2.5
     transitivePeerDependencies:
       - '@langchain/core'
       - '@opentelemetry/api'
 
-  '@cendor/core@0.4.0':
+  '@cendor/core@0.4.1':
     dependencies:
       decimal.js: 10.6.0
       js-tiktoken: 1.0.21
 
+  '@cendor/guardrails@file:../cendor-libs-js/packages/guardrails/cendor-guardrails-0.0.0.tgz':
+    dependencies:
+      '@cendor/core': 0.4.1
+    transitivePeerDependencies:
+      - '@langchain/core'
+      - '@opentelemetry/api'
+
   '@cendor/squeeze@0.2.5':
     dependencies:
-      '@cendor/core': 0.4.0
+      '@cendor/core': 0.4.1
     optionalDependencies:
       better-sqlite3: 12.11.1
     transitivePeerDependencies:
@@ -1660,7 +1679,7 @@ snapshots:
 
   '@cendor/tokenguard@0.2.5':
     dependencies:
-      '@cendor/core': 0.4.0
+      '@cendor/core': 0.4.1
     optionalDependencies:
       better-sqlite3: 12.11.1
     transitivePeerDependencies:

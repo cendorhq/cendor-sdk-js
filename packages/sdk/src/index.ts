@@ -65,7 +65,14 @@ export {
   PolicyViolation,
   trace,
   currentTraceId,
+  // guardrails gate (the real @cendor/guardrails objects)
+  defineGuardrail,
+  GuardrailTripped,
+  Verdict,
+  GuardrailDecision,
+  rules,
 } from './governance.js';
+export type { Guardrail, Context, Check, Stage, Action } from './governance.js';
 
 export {
   resolveProvider,

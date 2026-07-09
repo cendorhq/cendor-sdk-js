@@ -10,6 +10,7 @@ import { bus, trace } from '@cendor/core';
 import { z } from 'zod';
 import type { Agent, HandoffTarget } from './agent.js';
 import { type CheckpointState, asCheckpointer } from './checkpoint.js';
+import * as gate from './gate.js';
 import { withScope } from './governance.js';
 import {
   type EventQueue,
@@ -196,6 +197,7 @@ export async function runAgents(
               resolve: toolResolver(toolset),
               transferTargets: targets,
               onTurn,
+              guardrails: gate.effective(a, opts.guardrails),
             }),
           ),
         ),
@@ -261,6 +263,7 @@ export async function sequential(
               toolset: agent.tools,
               resolve: (n) => agent.getTool(n),
               transferTargets: new Map(),
+              guardrails: gate.effective(agent, opts.guardrails),
             }),
           ),
         ),
@@ -366,6 +369,7 @@ async function runOneAgent(
           toolset: agent.tools,
           resolve: (n) => agent.getTool(n),
           transferTargets: new Map(),
+          guardrails: gate.effective(agent, opts.guardrails),
         }),
       ),
     ),
@@ -432,6 +436,7 @@ export async function* streamAgents(
                   toolset,
                   resolve: toolResolver(toolset),
                   transferTargets: targets,
+                  guardrails: gate.effective(a, opts.guardrails),
                 },
                 (ev) => queue.push(ev),
               ),
