@@ -15,6 +15,13 @@ export { trace, currentTraceId } from '@cendor/core';
 // TS analogue of Python's `@guardrail`; kept distinct from `guard` above (the acttrace-policy scope).
 export { GuardrailDecision, GuardrailTripped, Verdict, defineGuardrail } from '@cendor/guardrails';
 export type { Action, Check, Context, Guardrail, Stage } from '@cendor/guardrails';
+// BYO-judge helpers (V03 A3): `judge.taskAdherence(respond, opts?)` is a `tool_call`-stage alignment
+// check — the SDK auto-threads the user's turn into `Context.instruction` (via the runner), so the
+// deferred parity tail is closed. `taskAdherence` is also re-exported directly for one-import parity
+// with Python's `cendor.sdk.task_adherence`.
+export { judge } from '@cendor/guardrails';
+import { judge as _judge } from '@cendor/guardrails';
+export const taskAdherence = _judge.taskAdherence;
 // `rules` is the SDK's own superset: the deterministic @cendor/guardrails rules re-exported PLUS the
 // acttrace-bridged `pii` / `secrets` / `entropy` detector guardrails (SDK-only — the library can't
 // import acttrace). One surface: `import { rules } from '@cendor/sdk'`.

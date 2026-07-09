@@ -61,6 +61,35 @@ function has(guardrails: Guardrail[], stage: string): boolean {
   return guardrails.some((g) => g.stages.includes(stage));
 }
 
+function messageText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((p) =>
+        p && typeof p === 'object' && typeof (p as { text?: unknown }).text === 'string'
+          ? (p as { text: string }).text
+          : '',
+      )
+      .join('');
+  }
+  return '';
+}
+
+/**
+ * The latest user turn's text in `messages` — the run's originating intent. Threaded into the
+ * `tool_call` gate as `Context.instruction` so an alignment check (`taskAdherence`) can compare a
+ * proposed call against what the user asked for. `''` when there is no user turn (the check then
+ * sees an empty instruction and can fall back or pass). PY parity: `originating_instruction`.
+ */
+export function originatingInstruction(messages: Message[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m && (m as { role?: unknown }).role === 'user')
+      return messageText((m as { content?: unknown }).content);
+  }
+  return '';
+}
+
 function blockedMessage(exc: GuardrailTripped): string {
   const d = exc.decisions[exc.decisions.length - 1];
   const head = `[blocked by ${d?.guardrail ?? 'guardrail'}]`;
@@ -145,9 +174,17 @@ export async function gateToolCall(
   name: string,
   args: Record<string, unknown>,
   traceId: string,
+  instruction = '',
 ): Promise<{ blocked: string | null; args: Record<string, unknown> }> {
   if (!has(guardrails, 'tool_call')) return { blocked: null, args };
-  const ctx: Context = { stage: 'tool_call', agent, tool: name, toolArgs: args, traceId };
+  const ctx: Context = {
+    stage: 'tool_call',
+    agent,
+    tool: name,
+    toolArgs: args,
+    traceId,
+    instruction,
+  };
   try {
     const { payload, decisions } = await evaluateAsync(guardrails, 'tool_call', args, ctx);
     record(decisions);

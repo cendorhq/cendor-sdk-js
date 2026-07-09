@@ -320,6 +320,7 @@ export async function agentLoop(
           guardrails,
           agent.name,
           traceId,
+          gate.originatingInstruction(messages),
         );
         messages.push(toolResultMessage(tc.id, tc.name, result));
         const target = cfg.transferTargets.get(tc.name);
@@ -343,6 +344,7 @@ async function executeTool(
   guardrails: Guardrail[] = [],
   agentName = '',
   traceId = '',
+  instruction = '',
 ): Promise<string> {
   const { blocked, args: gatedArgs } = await gate.gateToolCall(
     guardrails,
@@ -350,6 +352,7 @@ async function executeTool(
     name,
     args,
     traceId,
+    instruction,
   );
   if (blocked !== null) return blocked; // tool_call guardrail blocked — don't run the tool
   const tool = resolve(name);
@@ -409,6 +412,7 @@ export async function streamSegment(
           guardrails,
           agent.name,
           traceId,
+          gate.originatingInstruction(messages),
         );
         messages.push(toolResultMessage(tc.id, tc.name, result));
         emit(new ToolResultEvent(tc.name, result));
