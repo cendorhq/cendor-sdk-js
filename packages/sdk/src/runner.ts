@@ -55,6 +55,12 @@ export interface RunOptions {
    * For a team, applies to every segment; omit to use each agent's `Agent({ guardrails: [...] })`.
    */
   guardrails?: Guardrail[] | null;
+  /**
+   * Per-run guardrail execution mode override (`"blocking"` | `"parallel"`), else the agent's own
+   * `guardrailMode`. `"parallel"` overlaps input-stage guardrails with the first model call
+   * (single-agent runs). Validated — an unknown value throws.
+   */
+  guardrailMode?: string | null;
 }
 
 /** The minimal session surface the runner needs. `replace` may be async (awaited write-back). */
@@ -259,6 +265,12 @@ export interface LoopConfig {
   onTurn?: ((messages: Message[]) => void) | null;
   /** The effective guardrails for this run (agent's own, or the per-run override). */
   guardrails?: Guardrail[];
+  /**
+   * Resolved execution mode. `"parallel"` overlaps the input gate with the first model call; else
+   * the input gate runs blocking (pre-spend) before the loop. Set by the single-agent `Runner`;
+   * orchestration segments leave it unset (blocking), mirroring Python `run_agents`.
+   */
+  guardrailMode?: gate.GuardrailMode;
 }
 
 /**
@@ -276,12 +288,27 @@ export async function agentLoop(
   const guardrails = cfg.guardrails ?? [];
   const traceId = currentTraceId();
   let output: string | null = null;
-  await gate.gateInput(guardrails, agent.name, messages, traceId); // pre-spend: block throws / redact
+  // In `parallel` mode overlap the input gate with the first model call (its latency hides behind
+  // the call on the pass path); else gate before the loop (pre-spend: block throws / redact rewrites).
+  let gatePromise: Promise<void> | null = null;
+  if (cfg.guardrailMode === 'parallel') {
+    gatePromise = gate.startInputGate(guardrails, agent.name, messages, traceId);
+    // The gate may settle (reject on a block) before we join it after the first model call. Attach a
+    // no-op handler now so that in-flight rejection is never "unhandled"; the `await` below still
+    // observes and rethrows it. (JS can't cancel a promise, so there is nothing else to clean up.)
+    gatePromise?.catch(() => {});
+  } else {
+    await gate.gateInput(guardrails, agent.name, messages, traceId);
+  }
   for (let turn = 0; turn < cfg.maxTurns; turn++) {
     const wire = await assemble(agent, messages);
     const kwargs = buildKwargsWith(agent, wire, cfg.toolset, provider);
     const response = await callWithRetry(() => cfg.create(kwargs), cfg.retry);
     const parsed = provider.parse(response);
+    if (gatePromise !== null) {
+      await gatePromise; // parallel mode: join the input gate (a block throws here, post-call)
+      gatePromise = null;
+    }
     messages.push(assistantMessage(parsed.content, parsed.toolCalls));
     if (parsed.toolCalls.length > 0) {
       let switchTo: string | null = null;
@@ -528,8 +555,11 @@ export class Runner {
         agents: [agent.name],
         messages: [...(saved.messages ?? [])],
         incomplete: saved.output == null,
+        guardrailDecisions: [], // empty on a resume (the loop never ran)
       });
     }
+    // Resolve + validate the guardrail mode up front (an unknown mode throws — PY `effective_mode`).
+    const guardrailMode = gate.effectiveMode(agent, this.opts.guardrailMode ?? null);
     // Mint a fresh runId even on resume (single-agent parity with PY runner._start).
     const runId = uuidHex();
     const { provider, create } = providerAndCreate(agent);
@@ -547,34 +577,39 @@ export class Runner {
     );
     bus.subscribe(sub);
     try {
-      // Per-agent scope (attribution + `maxUsd` cap) wraps the single-agent path too, mirroring the
-      // orchestrator's `runOneAgent` — previously `maxUsd` was silently dropped here.
-      const res = await withScope(agent, () =>
-        trace(runId, () =>
-          withAuditDecision(this.opts.audit, input, agent.name, agent.model, runId, () =>
-            agentLoop(agent, messages, {
-              provider,
-              create,
-              maxTurns,
-              retry: this.opts.retry ?? null,
-              toolset: agent.tools,
-              resolve: (n) => agent.getTool(n),
-              transferTargets: EMPTY_TARGETS,
-              onTurn,
-              guardrails: gate.effective(agent, this.opts.guardrails),
-            }),
+      // `collecting` gathers this run's guardrail decisions for `Result.guardrailDecisions`.
+      return await gate.collecting(async () => {
+        // Per-agent scope (attribution + `maxUsd` cap) wraps the single-agent path too, mirroring the
+        // orchestrator's `runOneAgent` — previously `maxUsd` was silently dropped here.
+        const res = await withScope(agent, () =>
+          trace(runId, () =>
+            withAuditDecision(this.opts.audit, input, agent.name, agent.model, runId, () =>
+              agentLoop(agent, messages, {
+                provider,
+                create,
+                maxTurns,
+                retry: this.opts.retry ?? null,
+                toolset: agent.tools,
+                resolve: (n) => agent.getTool(n),
+                transferTargets: EMPTY_TARGETS,
+                onTurn,
+                guardrails: gate.effective(agent, this.opts.guardrails),
+                guardrailMode,
+              }),
+            ),
           ),
-        ),
-      );
-      await this.opts.session?.replace(messages);
-      ckpt?.save({ run_id: runId, messages, done: true, output: res.output });
-      return new Result({
-        output: parseOutput(res.output, agent.outputType),
-        steps,
-        traceId: runId,
-        agents: [agent.name],
-        messages,
-        incomplete: res.output === null,
+        );
+        await this.opts.session?.replace(messages);
+        ckpt?.save({ run_id: runId, messages, done: true, output: res.output });
+        return new Result({
+          output: parseOutput(res.output, agent.outputType),
+          steps,
+          traceId: runId,
+          agents: [agent.name],
+          messages,
+          incomplete: res.output === null,
+          guardrailDecisions: gate.snapshot(),
+        });
       });
     } finally {
       bus.unsubscribe(sub);
@@ -644,40 +679,41 @@ export async function* streamOne(
   const queue = createEventQueue<StreamEvent>();
   const produce = async (): Promise<void> => {
     try {
-      // Per-agent scope (attribution + `maxUsd` cap) wraps the single-agent stream path too.
-      const res = await withScope(agent, () =>
-        trace(runId, () =>
-          withAuditDecision(opts.audit, input, agent.name, agent.model, runId, () =>
-            streamSegment(
-              agent,
-              messages,
-              {
-                provider,
-                create,
-                maxTurns,
-                toolset: agent.tools,
-                resolve: (n) => agent.getTool(n),
-                transferTargets: EMPTY_TARGETS,
-                guardrails: gate.effective(agent, opts.guardrails),
-              },
-              (ev) => queue.push(ev),
+      // `collecting` gathers this run's guardrail decisions for `Result.guardrailDecisions`.
+      const result = await gate.collecting(async () => {
+        // Per-agent scope (attribution + `maxUsd` cap) wraps the single-agent stream path too.
+        const res = await withScope(agent, () =>
+          trace(runId, () =>
+            withAuditDecision(opts.audit, input, agent.name, agent.model, runId, () =>
+              streamSegment(
+                agent,
+                messages,
+                {
+                  provider,
+                  create,
+                  maxTurns,
+                  toolset: agent.tools,
+                  resolve: (n) => agent.getTool(n),
+                  transferTargets: EMPTY_TARGETS,
+                  guardrails: gate.effective(agent, opts.guardrails),
+                },
+                (ev) => queue.push(ev),
+              ),
             ),
           ),
-        ),
-      );
-      await opts.session?.replace(messages);
-      queue.push(
-        new RunComplete(
-          new Result({
-            output: parseOutput(res.output, agent.outputType),
-            steps,
-            traceId: runId,
-            agents: [agent.name],
-            messages,
-            incomplete: res.output === null,
-          }),
-        ),
-      );
+        );
+        await opts.session?.replace(messages);
+        return new Result({
+          output: parseOutput(res.output, agent.outputType),
+          steps,
+          traceId: runId,
+          agents: [agent.name],
+          messages,
+          incomplete: res.output === null,
+          guardrailDecisions: gate.snapshot(),
+        });
+      });
+      queue.push(new RunComplete(result));
       queue.close();
     } catch (err) {
       queue.fail(err);

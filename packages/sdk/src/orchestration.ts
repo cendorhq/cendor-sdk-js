@@ -146,6 +146,7 @@ export async function runAgents(
       agents: [...(saved.seen ?? [])],
       messages: [...(saved.messages ?? [])],
       incomplete: saved.output == null,
+      guardrailDecisions: [], // empty on a resume (no segment ran)
     });
   }
   const {
@@ -177,48 +178,52 @@ export async function runAgents(
     });
   };
   try {
-    for (seg = startSeg; seg < maxSegments; seg++) {
-      if (!seen.includes(active.name)) seen.push(active.name);
-      const child = `${parent}:${active.name}#${seg}`;
-      const { toolset, targets } = effective(active, registry);
-      const a = active;
-      const segNo = seg;
-      const onTurn = ckpt ? (): void => save(false, segNo, a.name) : null;
-      const { provider, create } = providerAndCreate(a);
-      const res = await withScope(a, () =>
-        trace(child, () =>
-          withAuditDecision(opts.audit, messages, a.name, a.model, child, () =>
-            agentLoop(a, messages, {
-              provider,
-              create,
-              maxTurns: opts.maxTurns ?? a.maxTurns,
-              retry: opts.retry ?? null,
-              toolset,
-              resolve: toolResolver(toolset),
-              transferTargets: targets,
-              onTurn,
-              guardrails: gate.effective(a, opts.guardrails),
-            }),
+    // `collecting` gathers every segment's guardrail decisions for `Result.guardrailDecisions`.
+    return await gate.collecting(async () => {
+      for (seg = startSeg; seg < maxSegments; seg++) {
+        if (!seen.includes(active.name)) seen.push(active.name);
+        const child = `${parent}:${active.name}#${seg}`;
+        const { toolset, targets } = effective(active, registry);
+        const a = active;
+        const segNo = seg;
+        const onTurn = ckpt ? (): void => save(false, segNo, a.name) : null;
+        const { provider, create } = providerAndCreate(a);
+        const res = await withScope(a, () =>
+          trace(child, () =>
+            withAuditDecision(opts.audit, messages, a.name, a.model, child, () =>
+              agentLoop(a, messages, {
+                provider,
+                create,
+                maxTurns: opts.maxTurns ?? a.maxTurns,
+                retry: opts.retry ?? null,
+                toolset,
+                resolve: toolResolver(toolset),
+                transferTargets: targets,
+                onTurn,
+                guardrails: gate.effective(a, opts.guardrails),
+              }),
+            ),
           ),
-        ),
-      );
-      if (res.switchTo && registry.has(res.switchTo)) {
-        active = registry.get(res.switchTo)!;
-        save(false, seg + 1, active.name);
-        continue;
+        );
+        if (res.switchTo && registry.has(res.switchTo)) {
+          active = registry.get(res.switchTo)!;
+          save(false, seg + 1, active.name);
+          continue;
+        }
+        output = res.output;
+        break;
       }
-      output = res.output;
-      break;
-    }
-    await opts.session?.replace(messages);
-    save(true, seg, active.name, output);
-    return new Result({
-      output: parseOutput(output, active.outputType),
-      steps,
-      traceId: parent,
-      agents: seen,
-      messages,
-      incomplete: output === null,
+      await opts.session?.replace(messages);
+      save(true, seg, active.name, output);
+      return new Result({
+        output: parseOutput(output, active.outputType),
+        steps,
+        traceId: parent,
+        agents: seen,
+        messages,
+        incomplete: output === null,
+        guardrailDecisions: gate.snapshot(),
+      });
     });
   } finally {
     bus.unsubscribe(sub);
@@ -246,38 +251,41 @@ export async function sequential(
   let current: unknown = input;
   let output: string | null = null;
   try {
-    for (let i = 0; i < agents.length; i++) {
-      const agent = agents[i]!;
-      seen.push(agent.name);
-      const child = `${parent}:${agent.name}#${i}`;
-      const msgs: Message[] = [userMessage(current)];
-      const { provider, create } = providerAndCreate(agent);
-      const res = await withScope(agent, () =>
-        trace(child, () =>
-          withAuditDecision(opts.audit, msgs, agent.name, agent.model, child, () =>
-            agentLoop(agent, msgs, {
-              provider,
-              create,
-              maxTurns: opts.maxTurns ?? agent.maxTurns,
-              retry: opts.retry ?? null,
-              toolset: agent.tools,
-              resolve: (n) => agent.getTool(n),
-              transferTargets: new Map(),
-              guardrails: gate.effective(agent, opts.guardrails),
-            }),
+    return await gate.collecting(async () => {
+      for (let i = 0; i < agents.length; i++) {
+        const agent = agents[i]!;
+        seen.push(agent.name);
+        const child = `${parent}:${agent.name}#${i}`;
+        const msgs: Message[] = [userMessage(current)];
+        const { provider, create } = providerAndCreate(agent);
+        const res = await withScope(agent, () =>
+          trace(child, () =>
+            withAuditDecision(opts.audit, msgs, agent.name, agent.model, child, () =>
+              agentLoop(agent, msgs, {
+                provider,
+                create,
+                maxTurns: opts.maxTurns ?? agent.maxTurns,
+                retry: opts.retry ?? null,
+                toolset: agent.tools,
+                resolve: (n) => agent.getTool(n),
+                transferTargets: new Map(),
+                guardrails: gate.effective(agent, opts.guardrails),
+              }),
+            ),
           ),
-        ),
-      );
-      output = res.output;
-      messagesAll.push(...msgs);
-      current = output;
-    }
-    return new Result({
-      output,
-      steps,
-      traceId: parent,
-      agents: seen,
-      messages: messagesAll,
+        );
+        output = res.output;
+        messagesAll.push(...msgs);
+        current = output;
+      }
+      return new Result({
+        output,
+        steps,
+        traceId: parent,
+        agents: seen,
+        messages: messagesAll,
+        guardrailDecisions: gate.snapshot(),
+      });
     });
   } finally {
     bus.unsubscribe(sub);
@@ -299,16 +307,19 @@ export async function parallel(
   bus.subscribe(sub);
   const outputs: Record<string, unknown> = {};
   try {
-    for (let i = 0; i < agents.length; i++) {
-      const agent = agents[i]!;
-      outputs[agent.name] = await runOneAgent(agent, `${parent}:${agent.name}#${i}`, input, opts);
-    }
-    return new Result({
-      output: outputs,
-      steps,
-      traceId: parent,
-      agents: agents.map((a) => a.name),
-      messages: [],
+    return await gate.collecting(async () => {
+      for (let i = 0; i < agents.length; i++) {
+        const agent = agents[i]!;
+        outputs[agent.name] = await runOneAgent(agent, `${parent}:${agent.name}#${i}`, input, opts);
+      }
+      return new Result({
+        output: outputs,
+        steps,
+        traceId: parent,
+        agents: agents.map((a) => a.name),
+        messages: [],
+        guardrailDecisions: gate.snapshot(),
+      });
     });
   } finally {
     bus.unsubscribe(sub);
@@ -329,20 +340,23 @@ export async function parallelAsync(
   );
   bus.subscribe(sub);
   try {
-    const pairs = await Promise.all(
-      agents.map(async (agent, i) => {
-        const out = await runOneAgent(agent, `${parent}:${agent.name}#${i}`, input, opts);
-        return [agent.name, out] as const;
-      }),
-    );
-    const outputs: Record<string, unknown> = {};
-    for (const [name, out] of pairs) outputs[name] = out;
-    return new Result({
-      output: outputs,
-      steps,
-      traceId: parent,
-      agents: agents.map((a) => a.name),
-      messages: [],
+    return await gate.collecting(async () => {
+      const pairs = await Promise.all(
+        agents.map(async (agent, i) => {
+          const out = await runOneAgent(agent, `${parent}:${agent.name}#${i}`, input, opts);
+          return [agent.name, out] as const;
+        }),
+      );
+      const outputs: Record<string, unknown> = {};
+      for (const [name, out] of pairs) outputs[name] = out;
+      return new Result({
+        output: outputs,
+        steps,
+        traceId: parent,
+        agents: agents.map((a) => a.name),
+        messages: [],
+        guardrailDecisions: gate.snapshot(),
+      });
     });
   } finally {
     bus.unsubscribe(sub);
@@ -417,52 +431,52 @@ export async function* streamAgents(
   const maxSegments = 2 * registry.size + 2;
   const produce = async (): Promise<void> => {
     try {
-      for (let seg = 0; seg < maxSegments; seg++) {
-        if (!seen.includes(active.name)) seen.push(active.name);
-        const child = `${parent}:${active.name}#${seg}`;
-        const { toolset, targets } = effective(active, registry);
-        const a = active;
-        const { provider, create } = providerAndCreate(a);
-        const res = await withScope(a, () =>
-          trace(child, () =>
-            withAuditDecision(opts.audit, messages, a.name, a.model, child, () =>
-              streamSegment(
-                a,
-                messages,
-                {
-                  provider,
-                  create,
-                  maxTurns: opts.maxTurns ?? a.maxTurns,
-                  toolset,
-                  resolve: toolResolver(toolset),
-                  transferTargets: targets,
-                  guardrails: gate.effective(a, opts.guardrails),
-                },
-                (ev) => queue.push(ev),
+      const result = await gate.collecting(async () => {
+        for (let seg = 0; seg < maxSegments; seg++) {
+          if (!seen.includes(active.name)) seen.push(active.name);
+          const child = `${parent}:${active.name}#${seg}`;
+          const { toolset, targets } = effective(active, registry);
+          const a = active;
+          const { provider, create } = providerAndCreate(a);
+          const res = await withScope(a, () =>
+            trace(child, () =>
+              withAuditDecision(opts.audit, messages, a.name, a.model, child, () =>
+                streamSegment(
+                  a,
+                  messages,
+                  {
+                    provider,
+                    create,
+                    maxTurns: opts.maxTurns ?? a.maxTurns,
+                    toolset,
+                    resolve: toolResolver(toolset),
+                    transferTargets: targets,
+                    guardrails: gate.effective(a, opts.guardrails),
+                  },
+                  (ev) => queue.push(ev),
+                ),
               ),
             ),
-          ),
-        );
-        if (res.switchTo && registry.has(res.switchTo)) {
-          active = registry.get(res.switchTo)!;
-          continue;
+          );
+          if (res.switchTo && registry.has(res.switchTo)) {
+            active = registry.get(res.switchTo)!;
+            continue;
+          }
+          output = res.output;
+          break;
         }
-        output = res.output;
-        break;
-      }
-      await opts.session?.replace(messages);
-      queue.push(
-        new RunComplete(
-          new Result({
-            output: parseOutput(output, active.outputType),
-            steps,
-            traceId: parent,
-            agents: seen,
-            messages,
-            incomplete: output === null,
-          }),
-        ),
-      );
+        await opts.session?.replace(messages);
+        return new Result({
+          output: parseOutput(output, active.outputType),
+          steps,
+          traceId: parent,
+          agents: seen,
+          messages,
+          incomplete: output === null,
+          guardrailDecisions: gate.snapshot(),
+        });
+      });
+      queue.push(new RunComplete(result));
       queue.close();
     } catch (err) {
       queue.fail(err);

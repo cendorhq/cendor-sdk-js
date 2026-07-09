@@ -39,6 +39,15 @@ console.log(verify('audit.jsonl', { key: process.env.KEY })); // [true, "ok: ...
 - **Tools via zod** — `tool(fn, { parameters: z.object({...}) })` → each provider's native tool shape.
 - **Governance** (re-exported real libraries) — `budget`/`withBudget`, `track`, `report`, `guard`,
   `AuditLog`/`verify`, `registerModelPrice`, `BudgetExceeded`. A bare `run()` needs none of it.
+- **Guardrails** — `Agent({ guardrails: [...] })` gates all four stages. `rules` is one surface: the
+  deterministic `@cendor/guardrails` built-ins (`keywordDeny`, `regexRule`, `urlAllowlist`/`urlDeny`,
+  `lengthBounds`, `jsonSchema`, `custom`, `llmJudge`) **plus** the acttrace-bridged detector
+  guardrails `rules.pii` / `rules.secrets` / `rules.entropy` — PII/secret/high-entropy detection at
+  every stage, including `tool_output` (which the process-global `guard()` never sees). Every
+  trip/flag lands on `Result.guardrailDecisions` (and the audit chain). `Agent({ guardrailMode:
+  'parallel' })` (or `run(agent, input, { guardrailMode })`) overlaps input-stage guardrails with the
+  first model call for slow tier-3/4 input checks (a block still throws; no input redaction in that
+  mode).
 - **Orchestration** — `handoff`, `sequential`, `parallel`/`parallelAsync`, `supervisor`, multi-agent
   handoff teams (`run([entry, ...peers], input)`) on one correlated trace tree.
 - **Memory** — `Session`, `SummarizingSession`, `llmSummarizer`, `MemorySessionStore`,

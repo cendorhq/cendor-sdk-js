@@ -3,6 +3,7 @@
  * (camelCase fields). Holds no state; the runner drives it.
  */
 import type { Guardrail } from '@cendor/guardrails';
+import type { GuardrailMode } from './gate.js';
 import { type Provider, resolveProvider } from './providers.js';
 import { type Tool, type ToolFn, asTool } from './tools.js';
 
@@ -35,6 +36,15 @@ export interface AgentOptions {
    * `run(agent, input, { guardrails: [...] })`. Per-agent scoped (unlike the process-global `guard`).
    */
   guardrails?: Guardrail[];
+  /**
+   * `"blocking"` (default) runs input-stage guardrails before the first model call (a block is
+   * pre-spend, `$0`, and input *redaction* is applied before the call). `"parallel"` overlaps them
+   * with the first model call for lower latency on the pass path — only worth it for slow tier-3/4
+   * input checks (an LLM judge, a hosted rail), and it does not apply input redaction. A block still
+   * throws `GuardrailTripped`, but the in-flight call may already have completed (and been billed).
+   * Override per run with `run(agent, input, { guardrailMode })`.
+   */
+  guardrailMode?: GuardrailMode;
   /** Per-agent USD spend cap (orchestrator-enforced). */
   maxUsd?: number | null;
   apiKey?: string | null;
@@ -61,6 +71,7 @@ export class Agent {
   readonly retriever: ((query: string) => string[] | Promise<string[]>) | null;
   readonly handoffs: HandoffTarget[];
   readonly guardrails: Guardrail[];
+  readonly guardrailMode: GuardrailMode;
   readonly maxUsd: number | null;
   readonly apiKey: string | null;
   readonly baseURL: string | null;
@@ -84,6 +95,7 @@ export class Agent {
     this.retriever = opts.retriever ?? null;
     this.handoffs = opts.handoffs ?? [];
     this.guardrails = opts.guardrails ?? [];
+    this.guardrailMode = opts.guardrailMode ?? 'blocking';
     this.maxUsd = opts.maxUsd ?? null;
     this.apiKey = opts.apiKey ?? null;
     this.baseURL = opts.baseURL ?? null;

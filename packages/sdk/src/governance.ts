@@ -13,14 +13,12 @@ export { AuditLog, verify, Policy, PolicyViolation } from '@cendor/acttrace';
 export { trace, currentTraceId } from '@cendor/core';
 // The deterministic guardrails gate — the real @cendor/guardrails objects. `defineGuardrail` is the
 // TS analogue of Python's `@guardrail`; kept distinct from `guard` above (the acttrace-policy scope).
-export {
-  GuardrailDecision,
-  GuardrailTripped,
-  Verdict,
-  defineGuardrail,
-  rules,
-} from '@cendor/guardrails';
+export { GuardrailDecision, GuardrailTripped, Verdict, defineGuardrail } from '@cendor/guardrails';
 export type { Action, Check, Context, Guardrail, Stage } from '@cendor/guardrails';
+// `rules` is the SDK's own superset: the deterministic @cendor/guardrails rules re-exported PLUS the
+// acttrace-bridged `pii` / `secrets` / `entropy` detector guardrails (SDK-only — the library can't
+// import acttrace). One surface: `import { rules } from '@cendor/sdk'`.
+export * as rules from './rules.js';
 
 export interface GuardOptions {
   policy?: Policy | null;

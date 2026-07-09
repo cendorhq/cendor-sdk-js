@@ -5,6 +5,7 @@
  * `Result`/`Run`), and the streaming events.
  */
 import { LLMCall, Money, ToolCall, type Usage, sumMoney } from '@cendor/core';
+import type { GuardrailDecision } from '@cendor/guardrails';
 
 export { LLMCall, Money, ToolCall, sumMoney };
 export type { Usage };
@@ -56,6 +57,7 @@ export interface ResultInit {
   agents?: string[];
   messages?: Message[];
   incomplete?: boolean;
+  guardrailDecisions?: GuardrailDecision[];
 }
 
 /** The outcome of a run — final output plus the governed step trail. `Run` is an alias. */
@@ -66,6 +68,14 @@ export class Result {
   agents: string[];
   messages: Message[];
   incomplete: boolean;
+  /**
+   * Every guardrail trip/flag recorded during the run (redact/flag on the four stages, and any
+   * `tool_call`/`tool_output` block that returned a `"[blocked …]"` result to the model), in order —
+   * for post-hoc inspection without re-reading the audit file. A run that ended in a fail-closed
+   * `block` threw `GuardrailTripped` instead of returning a `Result`; read that exception's
+   * `.decisions` for the blocking decision.
+   */
+  guardrailDecisions: GuardrailDecision[];
 
   constructor(init: ResultInit) {
     this.output = init.output;
@@ -74,6 +84,7 @@ export class Result {
     this.agents = init.agents ?? [];
     this.messages = init.messages ?? [];
     this.incomplete = init.incomplete ?? false;
+    this.guardrailDecisions = init.guardrailDecisions ?? [];
   }
 
   get llmSteps(): Step[] {
