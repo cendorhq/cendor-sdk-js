@@ -44,6 +44,8 @@ export {
   llmSummarizer,
   MemorySessionStore,
   SqliteSessionStore,
+  // Deprecated alias for Python's `SQLiteSessionStore` casing (canonical: `SqliteSessionStore`).
+  SQLiteSessionStore,
 } from './memory.js';
 export type { SessionStore, Summarizer } from './memory.js';
 

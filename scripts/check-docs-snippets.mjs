@@ -31,6 +31,29 @@ const DOCS_DIRS = (
   ]
 ).map((d) => path.resolve(d));
 
+// Source dirs whose JSDoc `@example` blocks are ALSO extracted + typechecked (Type Teach): a taught
+// example that stops compiling fails CI, exactly like a rotted docs tab. Always the SDK's own source
+// (checked vs the built dist — catches breaking API changes before release); plus any sibling
+// `cendor-libs-js/packages/*/src` when checked out (skipped silently when absent, e.g. in the CI
+// docs-snippets job unless it also checks out cendor-libs-js). Override with `SOURCE_DIRS`.
+const libsJsRoot = process.env.CENDOR_LIBS_JS
+  ? path.resolve(process.env.CENDOR_LIBS_JS)
+  : path.join(repoRoot, '..', 'cendor-libs-js');
+const SOURCE_DIRS = (
+  process.env.SOURCE_DIRS?.split(path.delimiter) ?? [
+    path.join(repoRoot, 'packages', 'sdk', 'src'),
+    ...(() => {
+      const libs = path.join(libsJsRoot, 'packages');
+      if (!existsSync(libs)) return [];
+      return readdirSync(libs, { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => path.join(libs, e.name, 'src'));
+    })(),
+  ]
+)
+  .map((d) => path.resolve(d))
+  .filter((d) => existsSync(d));
+
 // Free DATA identifiers docs snippets may use without declaring (each snippet is its own
 // module, so a local `const agent = …` shadows these cleanly). API names are NOT here — they
 // get real-typed globals below, so a typo'd or misused API call still fails.
@@ -156,6 +179,77 @@ function extract(file) {
   return snippets;
 }
 
+// Extract ` ```ts ` fences that live inside a JSDoc `@example` in a source file. The comment
+// prefix (` * `) is stripped so the code compiles as-is; a fence preceded by a `ts-check: skip`
+// line (within the same JSDoc) is skipped, for signature-shape pseudo-code. Plain-text `@example`
+// blocks with no ```ts fence are documentation only and are NOT extracted.
+function extractSourceExamples(file) {
+  const lines = readFileSync(file, 'utf8').split(/\r?\n/);
+  const snippets = [];
+  let inBlock = false; // inside a /** ... */ comment
+  let sawExample = false; // seen @example since the last fence in this block
+  let skipNext = false; // a `ts-check: skip` was seen after @example
+  let open = null; // { startLine, buf }
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    if (!inBlock) {
+      if (/\/\*\*/.test(raw)) {
+        inBlock = true;
+        sawExample = false;
+        skipNext = false;
+      }
+      continue;
+    }
+    // strip the JSDoc prefix (leading whitespace + `*` + one optional space)
+    const line = raw.replace(/^\s*\*\s?/, '');
+    if (open) {
+      if (FENCE_CLOSE.test(line.trim())) {
+        snippets.push({ line: open.startLine, code: open.buf.join('\n') });
+        open = null;
+      } else open.buf.push(line);
+      if (/\*\//.test(raw)) inBlock = false;
+      continue;
+    }
+    if (/@example/.test(line)) {
+      sawExample = true;
+      skipNext = false;
+    } else if (sawExample && line.trim() === 'ts-check: skip') {
+      skipNext = true;
+    } else if (sawExample && FENCE_OPEN.test(line.trim())) {
+      if (skipNext) {
+        skipNext = false; // consume the skipped fence
+        for (let k = i + 1; k < lines.length; k++) {
+          const inner = lines[k].replace(/^\s*\*\s?/, '');
+          if (FENCE_CLOSE.test(inner.trim())) {
+            i = k;
+            break;
+          }
+        }
+      } else {
+        open = { startLine: i + 2, buf: [] };
+      }
+    }
+    if (/\*\//.test(raw)) {
+      inBlock = false;
+      sawExample = false;
+    }
+  }
+  return snippets;
+}
+
+// Recursively list *.ts source files under a dir (skipping node_modules, dist, *.d.ts, tests).
+function walkTs(dir) {
+  const out = [];
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    if (e.name === 'node_modules' || e.name === 'dist' || e.name === 'docs-snippets') continue;
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) out.push(...walkTs(full));
+    else if (e.name.endsWith('.ts') && !e.name.endsWith('.d.ts') && !e.name.endsWith('.test.ts'))
+      out.push(full);
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------- collect
 for (const dir of DOCS_DIRS) {
   if (!existsSync(dir)) {
@@ -192,7 +286,23 @@ for (const dir of DOCS_DIRS) {
     }
   }
 }
-console.log(`extracted ${n} TypeScript snippets from ${DOCS_DIRS.length} docs trees`);
+const docCount = n;
+// Source JSDoc `@example` blocks (Type Teach), compiled in the same pass.
+let srcExamples = 0;
+for (const dir of SOURCE_DIRS) {
+  for (const file of walkTs(dir)) {
+    for (const s of extractSourceExamples(file)) {
+      const id = `snip_${String(n).padStart(3, '0')}`;
+      manifest.push({ id, source: path.relative(path.join(repoRoot, '..'), file), line: s.line });
+      writeFileSync(path.join(workDir, `${id}.ts`), `export {};\n${s.code}\n`);
+      n++;
+      srcExamples++;
+    }
+  }
+}
+console.log(
+  `extracted ${docCount} snippets from ${DOCS_DIRS.length} docs trees + ${srcExamples} JSDoc @example blocks from ${SOURCE_DIRS.length} source trees`,
+);
 
 writeFileSync(
   path.join(workDir, 'globals.d.ts'),

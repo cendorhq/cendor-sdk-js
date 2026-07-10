@@ -169,7 +169,16 @@ export class MemorySessionStore implements SessionStore {
   close(): void {}
 }
 
-/** Durable SQLite-backed session store (Node; via `better-sqlite3`). */
+/**
+ * Durable SQLite-backed session store (Node; via `better-sqlite3`). Note the casing —
+ * `SqliteSessionStore` (Python's equivalent is spelled `SQLiteSessionStore`).
+ *
+ * @example
+ * ```ts
+ * import { SqliteSessionStore } from '@cendor/sdk';
+ * const session = new SqliteSessionStore('sessions.db');
+ * ```
+ */
 export class SqliteSessionStore implements SessionStore {
   private readonly db: {
     prepare(sql: string): {
@@ -208,3 +217,15 @@ export class SqliteSessionStore implements SessionStore {
     this.db.close();
   }
 }
+
+/**
+ * @deprecated Canonical casing is `SqliteSessionStore` (Python uses `SQLiteSessionStore`). Kept as an
+ * alias so Python users' spelling still resolves in TypeScript.
+ *
+ * @example
+ * ```ts
+ * import { SQLiteSessionStore } from '@cendor/sdk';
+ * const session = new SQLiteSessionStore('sessions.db');
+ * ```
+ */
+export const SQLiteSessionStore = SqliteSessionStore;

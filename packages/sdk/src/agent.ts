@@ -55,6 +55,26 @@ export interface AgentOptions {
   azureADTokenProvider?: (() => Promise<string>) | null;
 }
 
+/**
+ * A governed agent — configure once, then drive it with {@link run} (or {@link Runner}). Holds no
+ * state; the runner drives it.
+ *
+ * There is **no `budget` field**: the per-agent USD cap is {@link AgentOptions.maxUsd}
+ * (orchestrator-enforced). For a *process-wide* spend cap, wrap the run in `budget()` from
+ * `@cendor/tokenguard`. TypeScript ships OpenAI + Anthropic first-class; other providers load lazily.
+ *
+ * @example
+ * ```ts
+ * import { Agent, run, rules } from '@cendor/sdk';
+ * const agent = new Agent({
+ *   name: 'support',
+ *   model: 'gpt-4o',
+ *   guardrails: [rules.keywordDeny(['ignore previous'], { action: 'block' })],
+ *   maxUsd: 0.5,
+ * });
+ * const result = await run(agent, 'Why was I charged twice?');
+ * ```
+ */
 export class Agent {
   readonly name: string;
   readonly model: string;

@@ -3,6 +3,13 @@ import { type AuditLog, type Policy, guard as acttraceGuard } from '@cendor/actt
  * Governance re-exports — the real `@cendor/tokenguard` / `@cendor/acttrace` objects (never wrappers),
  * plus the SDK's own `guard` (a callback-scope around acttrace's interceptor) and `registerModelPrice`.
  * A bare `run()` needs none of this; governance rides `@cendor/core`'s bus + interceptor seams.
+ *
+ * @example
+ * ```ts
+ * import { rules, judge } from '@cendor/sdk';
+ * const deny = rules.keywordDeny(['drop table'], { action: 'block' });
+ * const check = judge.judge(async (system, user) => 'x', 'Trip on destructive shell commands.');
+ * ```
  */
 import { Dec, addInterceptor, prices, removeInterceptor } from '@cendor/core';
 import { BudgetExceeded, budget, configure, report, track, withBudget } from '@cendor/tokenguard';
@@ -21,6 +28,18 @@ export type { Action, Check, Context, Guardrail, Stage } from '@cendor/guardrail
 // with Python's `cendor.sdk.task_adherence`.
 export { judge } from '@cendor/guardrails';
 import { judge as _judge } from '@cendor/guardrails';
+/**
+ * BYO LLM-judge alignment check (`tool_call` stage): *is this proposed tool call aligned with the
+ * user's instruction?* Wrap the returned check with `rules.llmJudge` to get a `Guardrail`; the SDK
+ * auto-threads the originating turn into `Context.instruction`.
+ *
+ * @example
+ * ```ts
+ * import { taskAdherence, rules } from '@cendor/sdk';
+ * const check = taskAdherence(async (system, user) => 'x', { action: 'flag' });
+ * const guardrail = rules.llmJudge(check, { stage: 'tool_call' });
+ * ```
+ */
 export const taskAdherence = _judge.taskAdherence;
 // V04: curated starter injection list + the policy JSON Schema (with loadPolicy(src, { validate })).
 // `judge.intentPrompt` (the LLM-judge intent backend) rides the re-exported `judge` namespace above.
@@ -60,7 +79,15 @@ export interface RegisterModelPriceOptions {
   per?: string;
 }
 
-/** Register a model's rates (default per 1M tokens) in core's price table so USD budgets bind on it. */
+/**
+ * Register a model's rates (default per 1M tokens) in core's price table so USD budgets bind on it.
+ *
+ * @example
+ * ```ts
+ * import { registerModelPrice } from '@cendor/sdk';
+ * registerModelPrice('my-fine-tune', { input: 0.5, output: 1.5 });
+ * ```
+ */
 export function registerModelPrice(model: string, opts: RegisterModelPriceOptions): void {
   const per = opts.per ?? '1M';
   const div = PER[per];

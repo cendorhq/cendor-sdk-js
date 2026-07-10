@@ -536,7 +536,17 @@ export function createEventQueue<T>(): EventQueue<T> {
 
 // --------------------------------------------------------------------------- Runner
 
-/** Drive one `Agent`. */
+/**
+ * Drive one `Agent`. The class form of {@link run} — construct once with `{ session, audit,
+ * checkpoint, … }`, then call `.run(input)`.
+ *
+ * @example
+ * ```ts
+ * import { Agent, Runner } from '@cendor/sdk';
+ * const runner = new Runner(new Agent({ name: 'support', model: 'gpt-4o' }));
+ * const result = await runner.run('Where is my order?');
+ * ```
+ */
 export class Runner {
   constructor(
     readonly agent: Agent,
@@ -732,6 +742,18 @@ export async function* streamOne(
   await producer;
 }
 
+/**
+ * Run an agent (or a team of agents) over `input` and resolve to a `Result`. The main entry point;
+ * `run.stream` / `run.astream` are the live streaming generators.
+ *
+ * @example
+ * ```ts
+ * import { Agent, run } from '@cendor/sdk';
+ * const agent = new Agent({ name: 'support', model: 'gpt-4o' });
+ * const result = await run(agent, 'Summarize my last invoice.');
+ * console.log(result.output);
+ * ```
+ */
 export const run: RunFn = Object.assign(runImpl, { stream: streamImpl, astream: streamImpl });
 
 export { currentTraceId, trace } from '@cendor/core';

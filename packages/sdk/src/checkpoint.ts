@@ -29,7 +29,17 @@ export interface CheckpointState {
   seg?: number;
 }
 
-/** Persist and restore run state to a local JSON file. */
+/**
+ * Persist and restore run state to a local JSON file — pass one as `run(agent, input, { checkpoint })`
+ * and a crashed run resumes from the last saved turn without re-running completed work.
+ *
+ * @example
+ * ```ts
+ * import { Agent, run, Checkpointer } from '@cendor/sdk';
+ * const agent = new Agent({ name: 'support', model: 'gpt-4o' });
+ * const result = await run(agent, 'Draft the report', { checkpoint: new Checkpointer('run.json') });
+ * ```
+ */
 export class Checkpointer {
   constructor(readonly path: string) {}
 
