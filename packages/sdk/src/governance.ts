@@ -22,6 +22,9 @@ export type { Action, Check, Context, Guardrail, Stage } from '@cendor/guardrail
 export { judge } from '@cendor/guardrails';
 import { judge as _judge } from '@cendor/guardrails';
 export const taskAdherence = _judge.taskAdherence;
+// V04: curated starter injection list + the policy JSON Schema (with loadPolicy(src, { validate })).
+// `judge.intentPrompt` (the LLM-judge intent backend) rides the re-exported `judge` namespace above.
+export { presets, policySchema } from '@cendor/guardrails';
 // `rules` is the SDK's own superset: the deterministic @cendor/guardrails rules re-exported PLUS the
 // acttrace-bridged `pii` / `secrets` / `entropy` detector guardrails (SDK-only — the library can't
 // import acttrace). One surface: `import { rules } from '@cendor/sdk'`.

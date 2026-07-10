@@ -27,6 +27,9 @@ export const lengthBounds = guardrailRules.lengthBounds;
 export const jsonSchema = guardrailRules.jsonSchema;
 export const custom = guardrailRules.custom;
 export const llmJudge = guardrailRules.llmJudge;
+// V04: semantic category-by-example + the pre-LLM intent gate (BYO embed/classify).
+export const customCategory = guardrailRules.customCategory;
+export const intent = guardrailRules.intent;
 
 type BridgeAction = 'block' | 'redact' | 'flag';
 

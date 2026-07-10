@@ -63,8 +63,8 @@ importers:
         specifier: ^0.4.0
         version: 0.4.1
       '@cendor/guardrails':
-        specifier: ^0.3.0
-        version: 0.3.0
+        specifier: ^0.4.0
+        version: 0.4.0
       '@cendor/squeeze':
         specifier: ^0.2.5
         version: 0.2.5
@@ -179,8 +179,8 @@ packages:
       '@opentelemetry/api':
         optional: true
 
-  '@cendor/guardrails@0.3.0':
-    resolution: {integrity: sha512-bTuro8n/jE/G9PFEPRzZOa6WCrxQl94ao0gRojN0HaYb241SdxAtuej/q1vQgbTyppaNsTZeG/Xmy2ReJIM89g==}
+  '@cendor/guardrails@0.4.0':
+    resolution: {integrity: sha512-VqoqS0/7/ihk/EEAAFvnRtiQ8TEmz1qC0n+2zhFIy8FH3ASYWEHWGEsANe9eguvKIqU7Lvaeao1blCHJ9uF+zw==}
     engines: {node: '>=18'}
 
   '@cendor/squeeze@0.2.5':
@@ -1656,7 +1656,7 @@ snapshots:
       decimal.js: 10.6.0
       js-tiktoken: 1.0.21
 
-  '@cendor/guardrails@0.3.0':
+  '@cendor/guardrails@0.4.0':
     dependencies:
       '@cendor/core': 0.4.1
     transitivePeerDependencies:

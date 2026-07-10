@@ -71,6 +71,10 @@ export {
   Verdict,
   GuardrailDecision,
   rules,
+  // V04: curated injection starter + the policy JSON Schema (rules.intent / rules.customCategory
+  // ride the `rules` namespace above; judge.intentPrompt via @cendor/guardrails' `judge`).
+  presets,
+  policySchema,
 } from './governance.js';
 export type { Guardrail, Context, Check, Stage, Action } from './governance.js';
 
