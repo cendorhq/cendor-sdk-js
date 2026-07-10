@@ -82,6 +82,14 @@ const AMBIENT = [
   'store',
   'model',
   'messages',
+  // guardrails semantic/intent/judge/adapter snippets: a bring-your-own embedder, a judge model
+  // call, a classifier, and duck-typed cloud clients are user-supplied (DATA), typed `any`.
+  'embed',
+  'respond',
+  'classify',
+  'azureClient',
+  'bedrock',
+  'armorClient',
 ];
 
 // API names later snippets on a page use without re-importing (the page's earlier snippet
