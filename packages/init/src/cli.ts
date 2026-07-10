@@ -171,7 +171,6 @@ function main(): number {
       scaffold: { type: 'boolean' },
       force: { type: 'boolean' },
       'dry-run': { type: 'boolean' },
-      yes: { type: 'boolean', short: 'y' },
     },
   });
 

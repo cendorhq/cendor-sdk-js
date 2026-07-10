@@ -10,7 +10,9 @@
     "@cendor/cassette": "0.2.7",
     "@cendor/acttrace": "0.5.3",
     "@cendor/libs": "0.2.11",
-    "@cendor/sdk": "0.9.1"
+    "@cendor/sdk": "0.9.1",
+    "@cendor/mcp": "0.1.1",
+    "@cendor/init": "0.1.1"
   },
   "pypi": {
     "cendor-core": "1.5.1",
@@ -22,6 +24,8 @@
     "cendor-acttrace": "1.4.2",
     "cendor-libs": "1.2.0",
     "cendor": "1.1.0",
-    "cendor-sdk": "1.6.1"
+    "cendor-sdk": "1.6.1",
+    "cendor-mcp": "0.1.1",
+    "cendor-init": "0.1.1"
   }
 }

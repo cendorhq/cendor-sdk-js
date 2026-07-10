@@ -1,8 +1,8 @@
 /**
  * Loads the vendored assistant-rules templates + the offline versions snapshot.
  *
- * These are VENDORED copies of section 3 ("Wire up your AI assistant") of the docs source of truth,
- * `cendor-libs/docs/for-ai-assistants.md`. That page is the single source — do not fork its wording;
+ * These are VENDORED copies of the copy-paste rules blocks from the docs source of truth,
+ * `cendor-libs/docs/assistant-rules.md`. That page is the single source — do not fork its wording;
  * when it changes, re-copy the blocks here (see the cendorhq root CLAUDE.md release-sync list).
  *
  * The files live in `../templates/` (one level above this module in both `src/` and the published

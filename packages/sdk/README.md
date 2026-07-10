@@ -83,4 +83,7 @@ Field names map `snake_case` (Python) → `camelCase`; type and error names are 
 ```bash
 npm i @cendor/sdk openai              # + @anthropic-ai/sdk for Claude
 ```
+
+Using an AI coding assistant? `npx @cendor/init` (TS) / `uvx cendor-init` (Python) wires it up — or point it at [cendor.ai/docs/for-ai-assistants](https://cendor.ai/docs/for-ai-assistants).
+
 `openai` / `@anthropic-ai/sdk` / `@opentelemetry/api` are optional peers; `better-sqlite3` is optional.

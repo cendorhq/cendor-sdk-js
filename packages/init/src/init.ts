@@ -59,7 +59,7 @@ function targetFor(a: Assistant): Target {
     case 'claude':
       return { assistant: a, path: 'CLAUDE.md', mode: 'shared', body: claudeBody };
     case 'windsurf':
-      // Windsurf has no dedicated §3 template; the generic AGENTS body is the right cheatsheet.
+      // Windsurf has no dedicated rules-file template; the generic AGENTS body is the right cheatsheet.
       return { assistant: a, path: '.windsurf/rules', mode: 'shared', body: agentsBody };
   }
 }
