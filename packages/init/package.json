@@ -1,7 +1,6 @@
 {
   "name": "@cendor/init",
   "version": "0.1.0",
-  "private": true,
   "description": "Make your project Cendor-ready and Cendor-fluent for your AI assistant in one step — writes assistant rules files, optional MCP config, and a correct starter, plus a `doctor` that catches wiring mistakes. Offline, no key, no network.",
   "type": "module",
   "license": "Apache-2.0",
