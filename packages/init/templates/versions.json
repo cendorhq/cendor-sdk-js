@@ -1,0 +1,27 @@
+{
+  "_comment": "Committed FALLBACK snapshot of published versions, mirroring the site /releases source of truth (cendor-site/src/pages/releases.astro) and cendor-mcp/data/versions.json. `doctor` reads this OFFLINE to decide whether an installed cendor/@cendor package is behind. It is only a hint — the live source of truth is https://cendor.ai/releases. Keep in sync after every release (see cendorhq root CLAUDE.md -> 'After EVERY release, sync all version/reference surfaces'). Versions are INDEPENDENT across languages; the parity matrix, not matching numbers, is the contract.",
+  "asOf": "2026-07-10",
+  "npm": {
+    "@cendor/core": "0.5.0",
+    "@cendor/tokenguard": "0.2.6",
+    "@cendor/guardrails": "0.6.0",
+    "@cendor/contextkit": "1.0.6",
+    "@cendor/squeeze": "0.2.6",
+    "@cendor/cassette": "0.2.6",
+    "@cendor/acttrace": "0.5.2",
+    "@cendor/libs": "0.2.11",
+    "@cendor/sdk": "0.9.0"
+  },
+  "pypi": {
+    "cendor-core": "1.5.0",
+    "cendor-tokenguard": "1.1.2",
+    "cendor-guardrails": "1.5.0",
+    "cendor-contextkit": "1.0.2",
+    "cendor-squeeze": "1.0.2",
+    "cendor-cassette": "1.0.1",
+    "cendor-acttrace": "1.4.1",
+    "cendor-libs": "1.2.0",
+    "cendor": "1.1.0",
+    "cendor-sdk": "1.6.0"
+  }
+}

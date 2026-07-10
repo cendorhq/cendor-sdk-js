@@ -1,0 +1,54 @@
+{
+  "name": "@cendor/init",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Make your project Cendor-ready and Cendor-fluent for your AI assistant in one step — writes assistant rules files, optional MCP config, and a correct starter, plus a `doctor` that catches wiring mistakes. Offline, no key, no network.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "cendor-init": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "templates",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "cendor",
+    "cli",
+    "init",
+    "scaffold",
+    "ai-assistant",
+    "copilot",
+    "cursor",
+    "claude-code",
+    "mcp",
+    "llm"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cendorhq/cendor-sdk-js.git",
+    "directory": "packages/init"
+  },
+  "homepage": "https://cendor.ai/docs/for-ai-assistants",
+  "bugs": {
+    "url": "https://github.com/cendorhq/cendor-sdk-js/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
