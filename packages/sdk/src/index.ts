@@ -75,6 +75,10 @@ export {
   // ride the `rules` namespace above; judge.intentPrompt via @cendor/guardrails' `judge`).
   presets,
   policySchema,
+  // BYO LLM-judge helpers — one-import parity with Python's `cendor.sdk.judge` /
+  // `cendor.sdk.task_adherence` (governance.ts defined these but index never forwarded them).
+  judge,
+  taskAdherence,
 } from './governance.js';
 export type { Guardrail, Context, Check, Stage, Action } from './governance.js';
 

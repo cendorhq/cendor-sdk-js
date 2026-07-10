@@ -13,8 +13,10 @@ import {
   GuardrailDecision,
   GuardrailTripped,
   type Message,
+  judge,
   rules,
   run,
+  taskAdherence,
   tool,
 } from '../src/index.js';
 import { isolate, openaiChat, recordingOpenAI, stubOpenAI, stubStreamTurns } from './_helpers.js';
@@ -217,5 +219,24 @@ describe('@cendor/sdk — guardrails', () => {
     const agent = agentWith(rec.client, [acheck]);
     await expect(run(agent, 'anything')).rejects.toBeInstanceOf(GuardrailTripped);
     expect(rec.calls).toHaveLength(0);
+  });
+
+  it('re-exports judge + taskAdherence for one-import parity with Python (M8)', () => {
+    // Regression: the docs' `import { judge } from '@cendor/sdk'` + `judge.taskAdherence(...)`
+    // failed at runtime because index.ts never forwarded them from governance.ts.
+    expect(typeof judge).toBe('object'); // the judge namespace
+    expect(typeof judge.judge).toBe('function');
+    expect(typeof judge.taskAdherence).toBe('function');
+    expect(typeof judge.intentPrompt).toBe('function');
+    expect(typeof taskAdherence).toBe('function'); // the flat re-export (cendor.sdk.task_adherence)
+    // and it composes into a usable guardrail (the copy-paste doc snippet)
+    const g = rules.llmJudge(
+      judge.taskAdherence(() => '{"trip": false, "reason": "ok"}'),
+      {
+        stage: 'tool_call',
+        action: 'flag',
+      },
+    );
+    expect(g.name).toBe('llm_judge');
   });
 });
