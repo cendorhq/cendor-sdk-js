@@ -118,11 +118,18 @@ function scaffoldLang(detected: Detected): Ecosystem {
   return detected.ecosystem;
 }
 
-function scaffoldTarget(lang: Ecosystem): { path: string; body: string } | null {
-  if (lang === 'python') {
-    return {
-      path: 'cendor_quickstart.py',
-      body: `"""Minimal Cendor starter — instrument once, then cap spend. Offline-safe scaffold.
+/** Is the cendor SDK (the "second door") declared/installed? Then scaffold a governed agent, not the
+ * bare libs starter. Checks installed + declared npm and declared pypi (cross-ecosystem projects). */
+function sdkDetected(detected: Detected): boolean {
+  return (
+    '@cendor/sdk' in detected.installedNpm ||
+    '@cendor/sdk' in detected.declaredNpm ||
+    'cendor-sdk' in detected.declaredPypi
+  );
+}
+
+// The bare-libraries starter: instrument once, then cap spend.
+const PY_LIBS_SCAFFOLD = `"""Minimal Cendor starter — instrument once, then cap spend. Offline-safe scaffold.
 
 Install:  pip install cendor-tokenguard "cendor-sdk[openai]"   (or just what you call)
 Docs:     https://cendor.ai/docs/getting-started
@@ -152,13 +159,9 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-`,
-    };
-  }
-  if (lang === 'node') {
-    return {
-      path: 'cendor-quickstart.mjs',
-      body: `// Minimal Cendor starter — instrument once, then cap spend. Offline-safe scaffold.
+`;
+
+const NODE_LIBS_SCAFFOLD = `// Minimal Cendor starter — instrument once, then cap spend. Offline-safe scaffold.
 //
 // Install:  npm i @cendor/core @cendor/tokenguard openai   (or just what you call)
 // Docs:     https://cendor.ai/docs/getting-started
@@ -181,8 +184,68 @@ const answer = budget({ usd: 0.5, onExceed: 'raise' })((question) =>
 
 console.log(await answer('Why was I charged twice?'));
 console.log(report(['feature'])); // spend grouped by tag — for free
-`,
-    };
+`;
+
+// The governed-agent starter (cendor-sdk detected): Agent + guardrails + budget + guard + run.
+const PY_SDK_SCAFFOLD = `"""Minimal governed-agent starter (cendor-sdk). Offline-safe scaffold.
+
+Install:  pip install "cendor-sdk[openai]"
+Docs:     https://cendor.ai/docs/sdk/getting-started
+"""
+
+from cendor.sdk import Agent, run, budget, guard, rules, Policy, AuditLog
+
+
+def main() -> None:
+    agent = Agent(
+        name="assistant",
+        model="gpt-4o",
+        instructions="Answer using tools when helpful.",
+        guardrails=[rules.keyword_deny(["ignore previous instructions"], action="block")],
+        max_usd=0.50,  # per-agent cost cap — NOT budget=
+    )
+    log = AuditLog(system="assistant", risk_tier="limited", path="audit.jsonl")
+
+    # budget -> tokenguard pre-flight; guard -> acttrace PII redaction + audit chain
+    with budget(usd=0.25, on_exceed="block"), guard(Policy.default(), audit=log):
+        result = run(agent, "Summarize today's standup notes.", audit=log)
+
+    print(result.output, result.cost)  # the answer + Decimal money — governed & audited
+
+
+if __name__ == "__main__":
+    main()
+`;
+
+const NODE_SDK_SCAFFOLD = `// Minimal governed-agent starter (@cendor/sdk). Offline-safe scaffold.
+//
+// Install:  npm i @cendor/sdk openai
+// Docs:     https://cendor.ai/docs/sdk/getting-started
+import { Agent, run, withBudget, guard, rules, Policy, AuditLog } from '@cendor/sdk';
+
+const agent = new Agent({
+  name: 'assistant',
+  model: 'gpt-4o',
+  instructions: 'Answer using tools when helpful.',
+  guardrails: [rules.keywordDeny(['ignore previous instructions'], { action: 'block' })],
+  maxUsd: 0.5, // per-agent cost cap — NOT budget=
+});
+const log = new AuditLog('assistant', { riskTier: 'limited', path: 'audit.jsonl' });
+
+// budget -> tokenguard pre-flight; guard -> acttrace PII redaction + audit chain
+const result = await withBudget({ usd: 0.25, onExceed: 'block' }, () =>
+  guard({ policy: Policy.default(), audit: log }, () =>
+    run(agent, "Summarize today's standup notes.", { audit: log })));
+
+console.log(result.output, result.cost?.toString()); // governed & audited
+`;
+
+function scaffoldTarget(lang: Ecosystem, sdk: boolean): { path: string; body: string } | null {
+  if (lang === 'python') {
+    return { path: 'cendor_quickstart.py', body: sdk ? PY_SDK_SCAFFOLD : PY_LIBS_SCAFFOLD };
+  }
+  if (lang === 'node') {
+    return { path: 'cendor-quickstart.mjs', body: sdk ? NODE_SDK_SCAFFOLD : NODE_LIBS_SCAFFOLD };
   }
   return null;
 }
@@ -240,7 +303,7 @@ export function runInit(opts: InitOptions): InitResult {
   }
 
   if (opts.scaffold) {
-    const target = scaffoldTarget(scaffoldLang(detected));
+    const target = scaffoldTarget(scaffoldLang(detected), sdkDetected(detected));
     if (target) {
       const abs = join(opts.root, target.path);
       if (existsSync(abs)) {

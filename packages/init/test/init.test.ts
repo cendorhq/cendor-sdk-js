@@ -94,4 +94,33 @@ describe('runInit', () => {
     expect(read('cendor_quickstart.py')).toContain('from cendor.core import instrument');
     expect(read('cendor_quickstart.py')).toContain('@budget(usd=0.50, on_exceed="raise")');
   });
+
+  it('--scaffold writes a governed-agent starter when the SDK is present (node)', () => {
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({ name: 'x', version: '1.0.0', dependencies: { '@cendor/sdk': '^0.9.0' } }),
+    );
+    runInit({ root, assistants: ['agents'], scaffold: true });
+    const body = read('cendor-quickstart.mjs');
+    expect(body).toContain("from '@cendor/sdk'");
+    expect(body).toContain('new Agent(');
+    expect(body).toContain('withBudget(');
+    expect(body).toContain('guard(');
+    expect(body).toContain('rules.keywordDeny');
+    // and NOT the bare libs starter
+    expect(body).not.toContain('instrument(new OpenAI())');
+  });
+
+  it('--scaffold writes a governed-agent starter when the SDK is present (python)', () => {
+    writeFileSync(
+      join(root, 'pyproject.toml'),
+      '[project]\nname="x"\nversion="0.1.0"\ndependencies=["cendor-sdk>=1.6"]\n',
+    );
+    runInit({ root, assistants: ['agents'], scaffold: true });
+    const body = read('cendor_quickstart.py');
+    expect(body).toContain('from cendor.sdk import Agent');
+    expect(body).toContain('max_usd=0.50');
+    expect(body).toContain('guard(Policy.default()');
+    expect(body).not.toContain('from cendor.core import instrument');
+  });
 });
