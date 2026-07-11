@@ -15,6 +15,8 @@ A thin, model-agnostic agent SDK where governance is the *foundation*, not a plu
 
 *model-agnostic · ESM-only · local-first · offline by default*
 
+Using an AI coding assistant? `npx @cendor/init` (TS) / `uvx cendor-init` (Python) wires it up — or point it at [cendor.ai/docs/for-ai-assistants](https://cendor.ai/docs/for-ai-assistants).
+
 > **The second door into [Cendor](https://github.com/cendorhq/cendor-libs).** One brand, two doors:
 > compose the [seven libraries](https://github.com/cendorhq/cendor-libs-js) beneath *your* framework, or
 > take the whole loop — governed — with this SDK. The `budget` / `guard` / `AuditLog` / … you import
@@ -44,8 +46,9 @@ npm i @cendor/sdk openai            # + the provider SDK(s) you call
 npm i @anthropic-ai/sdk @google/genai ollama   # e.g. Anthropic / Gemini / Ollama
 ```
 
-The install bundles the whole Cendor stack (`@cendor/core`, `tokenguard`, `acttrace`, `contextkit`,
-`squeeze`, `cassette`) as dependencies — you install once and import only from `@cendor/sdk`.
+The install bundles the whole Cendor stack (`@cendor/core`, `tokenguard`, `guardrails`, `acttrace`,
+`contextkit`, `squeeze`, `cassette` — all seven) as dependencies — you install once and import only
+from `@cendor/sdk`.
 Provider SDKs, `@opentelemetry/api`, and `@modelcontextprotocol/sdk` stay **optional peers**;
 `better-sqlite3` (durable sessions/audit) is an optional dependency. ESM-only, ships its own types.
 
