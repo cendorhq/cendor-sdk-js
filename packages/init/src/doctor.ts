@@ -223,6 +223,36 @@ function checkNpmVersions(detected: Detected, out: Finding[]): void {
   }
 }
 
+const SNAPSHOT_UPDATED_RE = /"_updated"\s*:\s*"(\d{4}-\d{2}-\d{2})"/;
+export const PRICE_SNAPSHOT_MAX_AGE_DAYS = 30;
+
+/**
+ * Warn when the installed @cendor/core's bundled price snapshot is >30 days old. Reads the
+ * embedded snapshot text from node_modules (no import, still offline); skips silently when
+ * @cendor/core isn't installed here.
+ */
+function checkPriceSnapshot(root: string, detected: Detected, out: Finding[]): void {
+  if (!('@cendor/core' in detected.installedNpm)) return;
+  try {
+    const file = join(root, 'node_modules', '@cendor', 'core', 'dist', 'prices-snapshot.js');
+    if (!existsSync(file)) return;
+    const m = SNAPSHOT_UPDATED_RE.exec(readFileSync(file, 'utf8'));
+    if (!m?.[1]) return;
+    const ageMs = Date.now() - new Date(`${m[1]}T00:00:00Z`).getTime();
+    const age = Math.floor(ageMs / 86_400_000);
+    if (age > PRICE_SNAPSHOT_MAX_AGE_DAYS) {
+      out.push({
+        severity: 'warn',
+        title: `Bundled price snapshot is ${age} days old`,
+        detail: `@cendor/core's offline price table is dated ${m[1]}. Models released since then estimate at $0 (a warn-once blind spot for USD budgets) until the table is refreshed.`,
+        fix: 'Call `prices.refresh()` at startup, or upgrade: npm i @cendor/core@latest',
+      });
+    }
+  } catch {
+    // a hint, never a doctor failure
+  }
+}
+
 export function runDoctor(root: string): DoctorResult {
   const detected = detectProject(root);
   const src = indexSources(root);
@@ -239,6 +269,7 @@ export function runDoctor(root: string): DoctorResult {
   if (detected.node) {
     checkNodeProviders(root, detected, src, findings);
     checkNpmVersions(detected, findings);
+    checkPriceSnapshot(root, detected, findings);
   }
   if (detected.python) {
     checkPyProviders(detected, src, findings);

@@ -81,6 +81,37 @@ describe('runDoctor', () => {
     expect(titles(r.findings, 'warn').some((t) => t.includes('behind'))).toBe(true);
   });
 
+  it('warns when the installed @cendor/core price snapshot is >30 days old', () => {
+    write(
+      'package.json',
+      '{"name":"x","version":"1.0.0","dependencies":{"@cendor/core":"^0.5.1"}}',
+    );
+    write('node_modules/@cendor/core/package.json', '{"name":"@cendor/core","version":"0.5.1"}');
+    write(
+      'node_modules/@cendor/core/dist/prices-snapshot.js',
+      'export const PRICES_JSON = `{"_updated": "2020-01-01","models": {}}`;\n',
+    );
+    write('src/a.ts', "import { instrument } from '@cendor/core';\nconst c = instrument({});\n");
+    const r = runDoctor(root);
+    expect(titles(r.findings, 'warn').some((t) => t.includes('price snapshot'))).toBe(true);
+  });
+
+  it('does not warn when the price snapshot is fresh', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    write(
+      'package.json',
+      '{"name":"x","version":"1.0.0","dependencies":{"@cendor/core":"^0.5.1"}}',
+    );
+    write('node_modules/@cendor/core/package.json', '{"name":"@cendor/core","version":"0.5.1"}');
+    write(
+      'node_modules/@cendor/core/dist/prices-snapshot.js',
+      `export const PRICES_JSON = \`{"_updated": "${today}","models": {}}\`;\n`,
+    );
+    write('src/a.ts', "import { instrument } from '@cendor/core';\nconst c = instrument({});\n");
+    const r = runDoctor(root);
+    expect(titles(r.findings, 'warn').some((t) => t.includes('price snapshot'))).toBe(false);
+  });
+
   it('reports no usage on an empty project and exits 0', () => {
     const r = runDoctor(root);
     expect(r.exitCode).toBe(0);
