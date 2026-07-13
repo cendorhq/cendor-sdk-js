@@ -13,10 +13,26 @@
  */
 import { createRequire } from 'node:module';
 import { instrument } from '@cendor/core';
+import { MissingAPIKeyError } from './errors.js';
 import type { JsonSchema, Tool } from './tools.js';
 import type { Message, ParsedResponse, ToolInvocation } from './types.js';
 
 const require = createRequire(import.meta.url);
+
+// Clients built with the keyless placeholder are recorded here → their create method is wrapped so a
+// placeholder 401 becomes a clear, env-var-naming hint. A WeakMap keeps it tied to the client's life.
+const placeholderHints = new WeakMap<object, string>();
+
+/** Whether `err` is a provider authentication failure (a 401/403 or an `AuthenticationError` type). */
+function isAuthError(err: unknown): boolean {
+  const e = err as
+    | { status?: unknown; statusCode?: unknown; name?: unknown; response?: { status?: unknown } }
+    | null
+    | undefined;
+  const status = e?.status ?? e?.statusCode ?? e?.response?.status;
+  if (status === 401 || status === 403) return true;
+  return e?.name === 'AuthenticationError' || e?.name === 'PermissionDeniedError';
+}
 
 // --------------------------------------------------------------------------- canonical builders
 
@@ -231,7 +247,25 @@ abstract class BaseProvider implements Provider {
   abstract readonly name: string;
   readonly supportsStream: boolean = false;
   protected abstract readonly createPath: string[];
+  /** The provider's standard key env var, named in the missing-key hint. `null` ⇒ no key concept
+   * (Bedrock/Ollama/Gemini/Foundry Local) and the hint is never emitted. */
+  protected readonly keyEnvVar: string | null = null;
   private readonly cache = new Map<string, unknown>();
+
+  /** Env vars that count as "a real key is present" (overridden where a provider reads more). */
+  protected credentialEnvVars(): string[] {
+    return this.keyEnvVar ? [this.keyEnvVar] : [];
+  }
+
+  /** Whether client construction fell back to the keyless placeholder (⇒ hint a live 401). */
+  protected usesPlaceholder(opts: ClientOptions): boolean {
+    if (!this.keyEnvVar || opts.apiKey) return false;
+    return !this.credentialEnvVars().some((v) => process.env[v]);
+  }
+
+  protected missingKeyMessage(): string {
+    return `No API key was found for the '${this.name}' provider — set the ${this.keyEnvVar} environment variable (or pass apiKey / client to the Agent). Docs: https://cendor.ai/docs/sdk/providers#api-keys--credentials`;
+  }
 
   abstract rawClient(opts: ClientOptions): unknown;
   abstract formatTools(tools: Tool[]): unknown;
@@ -264,6 +298,8 @@ abstract class BaseProvider implements Provider {
     if (c === undefined) {
       c = instrument(this.rawClient(opts));
       this.cache.set(key, c);
+      if (this.usesPlaceholder(opts) && c && typeof c === 'object')
+        placeholderHints.set(c as object, this.missingKeyMessage());
     }
     return c;
   }
@@ -273,7 +309,19 @@ abstract class BaseProvider implements Provider {
     for (const p of this.createPath.slice(0, -1)) owner = get(owner, p);
     const attr = this.createPath[this.createPath.length - 1]!;
     const fn = get(owner, attr) as (kwargs: Record<string, unknown>) => Promise<unknown>;
-    return (kwargs) => fn.call(owner, kwargs);
+    const call = (kwargs: Record<string, unknown>) => fn.call(owner, kwargs);
+    // A placeholder-backed client turns a provider 401 into an actionable MissingAPIKeyError.
+    const message =
+      client && typeof client === 'object' ? placeholderHints.get(client as object) : undefined;
+    if (message === undefined) return call;
+    return async (kwargs) => {
+      try {
+        return await call(kwargs);
+      } catch (err) {
+        if (isAuthError(err)) throw new MissingAPIKeyError(message, { cause: err });
+        throw err;
+      }
+    };
   }
 
   clearCache(): void {
@@ -291,6 +339,7 @@ function openaiSupportsTemperature(model: string): boolean {
 export class OpenAIChatProvider extends BaseProvider {
   readonly name: string = 'openai';
   override readonly supportsStream: boolean = true;
+  protected override readonly keyEnvVar: string | null = 'OPENAI_API_KEY';
   protected readonly createPath: string[] = ['chat', 'completions', 'create'];
 
   rawClient(opts: ClientOptions): unknown {
@@ -408,6 +457,7 @@ export class OpenAIChatProvider extends BaseProvider {
 
 export class OpenAIResponsesProvider extends BaseProvider {
   readonly name: string = 'openai_responses';
+  protected override readonly keyEnvVar: string | null = 'OPENAI_API_KEY';
   protected readonly createPath: string[] = ['responses', 'create'];
 
   rawClient(opts: ClientOptions): unknown {
@@ -631,6 +681,7 @@ export function canonicalToBedrock(messages: Message[]): Message[] {
 
 export class AnthropicProvider extends BaseProvider {
   readonly name: string = 'anthropic';
+  protected override readonly keyEnvVar: string | null = 'ANTHROPIC_API_KEY';
   protected readonly createPath: string[] = ['messages', 'create'];
 
   rawClient(opts: ClientOptions): unknown {
@@ -785,6 +836,14 @@ export class BedrockProvider extends BaseProvider {
   protected readonly createPath: string[] = ['converse'];
 
   rawClient(opts: ClientOptions): unknown {
+    if (opts.apiKey) {
+      throw new Error(
+        'Bedrock does not take apiKey — it authenticates via the AWS credential chain ' +
+          '(AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY, an AWS profile, or an IAM role) plus ' +
+          'AWS_REGION. Set those in your environment, or hand Agent({ client }) a pre-built ' +
+          'BedrockRuntimeClient. Docs: https://cendor.ai/docs/sdk/providers#api-keys--credentials',
+      );
+    }
     // aws-sdk-v3 drives Converse via `client.send(new ConverseCommand(input))`; wrap it in a
     // `converse(input)` method so the `createPath` seam (and core detection) has a stable surface.
     const mod = require('@aws-sdk/client-bedrock-runtime');
@@ -956,7 +1015,12 @@ export class OllamaProvider extends BaseProvider {
  */
 export class HuggingFaceProvider extends OpenAIChatProvider {
   override readonly name: string = 'huggingface';
+  protected override readonly keyEnvVar: string | null = 'HF_TOKEN';
   protected override readonly createPath: string[] = ['chatCompletion'];
+
+  protected override credentialEnvVars(): string[] {
+    return ['HF_TOKEN', 'HUGGINGFACEHUB_API_TOKEN'];
+  }
 
   override rawClient(opts: ClientOptions): unknown {
     const mod = require('@huggingface/inference');
@@ -999,6 +1063,11 @@ export function azureFoundryBaseUrl(opts: { baseUrl?: string | null }): string |
  */
 export class AzureFoundryProvider extends OpenAIChatProvider {
   override readonly name: string = 'azure';
+  protected override readonly keyEnvVar: string | null = 'AZURE_OPENAI_API_KEY';
+
+  protected override credentialEnvVars(): string[] {
+    return ['AZURE_OPENAI_API_KEY', 'AZURE_INFERENCE_CREDENTIAL', 'AZURE_AI_API_KEY'];
+  }
 
   override rawClient(opts: ClientOptions): unknown {
     const mod = require('openai');
@@ -1033,6 +1102,11 @@ export class AzureFoundryProvider extends OpenAIChatProvider {
 /** Azure AI Foundry via the OpenAI **Responses** API — same client construction, Responses surface. */
 export class AzureFoundryResponsesProvider extends OpenAIResponsesProvider {
   override readonly name: string = 'azure_responses';
+  protected override readonly keyEnvVar: string | null = 'AZURE_OPENAI_API_KEY';
+
+  protected override credentialEnvVars(): string[] {
+    return ['AZURE_OPENAI_API_KEY', 'AZURE_INFERENCE_CREDENTIAL', 'AZURE_AI_API_KEY'];
+  }
 
   override rawClient(opts: ClientOptions): unknown {
     return new AzureFoundryProvider().rawClient(opts);
@@ -1056,6 +1130,7 @@ export function foundryLocalBaseUrl(opts: { baseUrl?: string | null }): string |
  */
 export class FoundryLocalProvider extends OpenAIChatProvider {
   override readonly name: string = 'foundry_local';
+  protected override readonly keyEnvVar: string | null = null; // local, keyless — never hint
 
   override rawClient(opts: ClientOptions): unknown {
     const mod = require('openai');

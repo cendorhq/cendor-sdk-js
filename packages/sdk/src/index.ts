@@ -93,6 +93,7 @@ export {
   toolResultMessage,
 } from './providers.js';
 export type { Provider } from './providers.js';
+export { MissingAPIKeyError } from './errors.js';
 
 // Retrieval & embeddings
 export { embed, aembed, VectorIndex, Hit, formatContext } from './rag.js';
