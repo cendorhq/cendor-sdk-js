@@ -3,7 +3,7 @@
  * recorded figures), runs the agent, and checks output / contains / tool sequence / cost & token
  * ceilings / a custom judge.
  */
-import { using } from '@cendor/cassette';
+import { type Normalizer, using } from '@cendor/cassette';
 import { Dec } from '@cendor/core';
 import type { Agent } from './agent.js';
 import { run } from './runner.js';
@@ -24,6 +24,10 @@ export interface EvalCase {
   maxUsd?: number;
   maxTokens?: number;
   judge?: Judge;
+  /** Forwarded to cassette's replay matching — normalize volatile request parts (timestamps,
+   * uuids) before hashing, so a prompt that embeds "today's date" still replays. Same signature
+   * as `@cendor/cassette`'s `normalizer`. */
+  normalizer?: Normalizer;
 }
 
 export class EvalResult {
@@ -66,7 +70,7 @@ export async function evaluate(agent: Agent, cases: EvalCase[]): Promise<EvalRep
   const results: EvalResult[] = [];
   for (const c of cases) {
     let result: Result | undefined;
-    await using(c.cassette, { mode: 'replay' }, async () => {
+    await using(c.cassette, { mode: 'replay', normalizer: c.normalizer ?? null }, async () => {
       result = await run(agent, c.input);
     });
     const r = result as Result;

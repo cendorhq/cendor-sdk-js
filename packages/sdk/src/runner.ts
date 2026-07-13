@@ -184,6 +184,21 @@ export async function prepareMessages(
 }
 
 /**
+ * Diagnostic bus event: `contextBudget` assembly failed and the turn fell back to raw messages.
+ * Emitted on `@cendor/core`'s bus so the deliberate best-effort fallback is *silent but
+ * observable* — subscribe and alert on it if a fallback matters to you. Unknown event types are
+ * ignored by the stock subscribers (bus-events spec), so emitting this is side-effect-free.
+ * The TS twin of Python's `cendor.sdk.runner.ContextBudgetFallback`.
+ */
+export class ContextBudgetFallback {
+  constructor(
+    readonly agent: string,
+    readonly budgetTokens: number,
+    readonly error: string,
+  ) {}
+}
+
+/**
  * Optional context assembly to a token budget via contextkit (emits an audited AssemblyReport).
  * Falls back to the raw messages if unset or if assembly can't handle the shape (PY `_assemble`).
  */
@@ -198,7 +213,19 @@ export async function assemble(agent: Agent, messages: Message[]): Promise<Messa
     });
     ctx.add(new Block({ messages: messages as Record<string, unknown>[] }));
     return (await ctx.assemble()) as unknown as Message[];
-  } catch {
+  } catch (exc) {
+    try {
+      // make the silent fallback observable on the bus (never let the emit itself break it)
+      bus.emit(
+        new ContextBudgetFallback(
+          agent.name,
+          Number(agent.contextBudget),
+          exc instanceof Error ? exc.constructor.name : String(exc),
+        ),
+      );
+    } catch {
+      // diagnostics must never break the run
+    }
     return messages; // assembly is best-effort; degrade to raw messages
   }
 }

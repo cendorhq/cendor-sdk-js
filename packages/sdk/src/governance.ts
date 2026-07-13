@@ -1,8 +1,10 @@
-import { type AuditLog, type Policy, guard as acttraceGuard } from '@cendor/acttrace';
 /**
- * Governance re-exports — the real `@cendor/tokenguard` / `@cendor/acttrace` objects (never wrappers),
- * plus the SDK's own `guard` (a callback-scope around acttrace's interceptor) and `registerModelPrice`.
- * A bare `run()` needs none of this; governance rides `@cendor/core`'s bus + interceptor seams.
+ * Governance re-exports — the real `@cendor/tokenguard` / `@cendor/acttrace` objects (never
+ * wrappers). That includes `guard`: since `@cendor/acttrace` 0.6.0 it is dual-shape —
+ * `guard(policy, audit?)` returns the raw interceptor, `guard(opts, fn)` is the scope form — so
+ * the SDK re-exports the identical library object (`Object.is(sdk.guard, acttrace.guard)`).
+ * `registerModelPrice` is SDK-owned. A bare `run()` needs none of this; governance rides
+ * `@cendor/core`'s bus + interceptor seams.
  *
  * @example
  * ```ts
@@ -11,12 +13,13 @@ import { type AuditLog, type Policy, guard as acttraceGuard } from '@cendor/actt
  * const check = judge.judge(async (system, user) => 'x', 'Trip on destructive shell commands.');
  * ```
  */
-import { Dec, addInterceptor, prices, removeInterceptor } from '@cendor/core';
-import { BudgetExceeded, budget, configure, report, track, withBudget } from '@cendor/tokenguard';
+import { Dec, prices } from '@cendor/core';
+import { BudgetExceeded, budget, clamps, configure, downgrades, report, track, withBudget } from '@cendor/tokenguard';
 import type { Agent } from './agent.js';
 
-export { budget, withBudget, track, report, configure, BudgetExceeded };
-export { AuditLog, verify, Policy, PolicyViolation } from '@cendor/acttrace';
+export { budget, withBudget, track, report, configure, downgrades, clamps, BudgetExceeded };
+export { AuditLog, verify, Policy, PolicyViolation, guard } from '@cendor/acttrace';
+export type { GuardOptions, OnBlock } from '@cendor/acttrace';
 export { trace, currentTraceId } from '@cendor/core';
 // The deterministic guardrails gate — the real @cendor/guardrails objects. `defineGuardrail` is the
 // TS analogue of Python's `@guardrail`; kept distinct from `guard` above (the acttrace-policy scope).
@@ -41,33 +44,14 @@ import { judge as _judge } from '@cendor/guardrails';
  * ```
  */
 export const taskAdherence = _judge.taskAdherence;
-// V04: curated starter injection list + the policy JSON Schema (with loadPolicy(src, { validate })).
+// V04: curated starter injection list + the policy JSON Schema. `loadPolicy(src, { validate })`
+// is re-exported too (0.10.0 — closing the config-as-data lag vs Python's `load_policy`).
 // `judge.intentPrompt` (the LLM-judge intent backend) rides the re-exported `judge` namespace above.
-export { presets, policySchema } from '@cendor/guardrails';
+export { loadPolicy, presets, policySchema } from '@cendor/guardrails';
 // `rules` is the SDK's own superset: the deterministic @cendor/guardrails rules re-exported PLUS the
 // acttrace-bridged `pii` / `secrets` / `entropy` detector guardrails (SDK-only — the library can't
 // import acttrace). One surface: `import { rules } from '@cendor/sdk'`.
 export * as rules from './rules.js';
-
-export interface GuardOptions {
-  policy?: Policy | null;
-  audit?: AuditLog | null;
-  onBlock?: unknown;
-}
-
-/**
- * Run `fn` with an acttrace policy `guard` installed on core's interceptor seam (block / redact-before-
- * send / flag), removed on exit. The callback-scope form of the Python `with guard(...)` CM.
- */
-export async function guard<T>(opts: GuardOptions, fn: () => Promise<T>): Promise<T> {
-  const interceptor = acttraceGuard(opts.policy ?? null, opts.audit ?? null, opts.onBlock as never);
-  addInterceptor(interceptor);
-  try {
-    return await fn();
-  } finally {
-    removeInterceptor(interceptor);
-  }
-}
 
 const PER: Record<string, number> = { '1M': 1_000_000, '1K': 1_000, token: 1 };
 

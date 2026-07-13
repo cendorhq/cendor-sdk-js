@@ -4,7 +4,7 @@
  * normalized provider view (`ParsedResponse`, `ToolInvocation`), the run result model (`Step`,
  * `Result`/`Run`), and the streaming events.
  */
-import { LLMCall, Money, ToolCall, type Usage, sumMoney } from '@cendor/core';
+import { LLMCall, Money, ToolCall, Usage, sumMoney, sumUsage } from '@cendor/core';
 import type { GuardrailDecision } from '@cendor/guardrails';
 
 export { LLMCall, Money, ToolCall, sumMoney };
@@ -100,37 +100,13 @@ export class Result {
     }
     return null;
   }
-  /** Aggregate token usage over LLM steps (subset conventions preserved). */
-  get usage(): {
-    inputTokens: number;
-    outputTokens: number;
-    cachedTokens: number;
-    reasoningTokens: number;
-    cacheWrite: number;
-    totalTokens: number;
-  } {
-    let inputTokens = 0;
-    let outputTokens = 0;
-    let cachedTokens = 0;
-    let reasoningTokens = 0;
-    let cacheWrite = 0;
-    for (const s of this.llmSteps) {
-      const u = s.usage;
-      if (!u) continue;
-      inputTokens += u.inputTokens;
-      outputTokens += u.outputTokens;
-      cachedTokens += u.cachedTokens;
-      reasoningTokens += u.reasoningTokens;
-      cacheWrite += u.cacheWrite;
-    }
-    return {
-      inputTokens,
-      outputTokens,
-      cachedTokens,
-      reasoningTokens,
-      cacheWrite,
-      totalTokens: inputTokens + outputTokens,
-    };
+  /**
+   * Aggregate token usage over LLM steps (subset conventions preserved). Summed through core's
+   * field-complete `sumUsage` — a future `Usage` field can never silently vanish from this
+   * aggregate (it iterates the instances' own fields, not a hand list).
+   */
+  get usage(): Usage {
+    return sumUsage(this.llmSteps.map((s) => s.usage).filter((u): u is Usage => u !== null));
   }
   /** Aggregate cost over priced LLM steps (unpriced contribute nothing). */
   get cost(): Money {

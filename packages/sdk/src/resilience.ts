@@ -4,6 +4,9 @@
  * double-count. `BudgetExceeded` / `PolicyViolation` are never retried.
  */
 
+import { PolicyViolation } from '@cendor/acttrace';
+import { BudgetExceeded } from '@cendor/tokenguard';
+
 const RETRYABLE_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
 const TRANSIENT_HINTS = [
   'timeout',
@@ -17,14 +20,19 @@ const TRANSIENT_HINTS = [
   'temporarilyunavailable',
 ];
 
-/** Default classifier: never retry governance errors; retry on retryable HTTP status or a transient type-name hint. */
+/**
+ * Default classifier: never retry governance errors — matched by `instanceof` on the real library
+ * classes (a name-string match would silently turn never-retry into retry if a lib renamed its
+ * exception). Otherwise retry on a retryable HTTP status or a transient type-name hint — the name
+ * heuristic applies only to transient hints.
+ */
 export function defaultIsTransient(exc: unknown): boolean {
-  const name = (exc as { constructor?: { name?: string } })?.constructor?.name?.toLowerCase() ?? '';
-  if (name.includes('budgetexceeded') || name.includes('policyviolation')) return false;
+  if (exc instanceof BudgetExceeded || exc instanceof PolicyViolation) return false;
   const status =
     (exc as { status?: number; statusCode?: number })?.status ??
     (exc as { statusCode?: number })?.statusCode;
   if (typeof status === 'number' && RETRYABLE_STATUS.has(status)) return true;
+  const name = (exc as { constructor?: { name?: string } })?.constructor?.name?.toLowerCase() ?? '';
   return TRANSIENT_HINTS.some((h) => name.includes(h));
 }
 

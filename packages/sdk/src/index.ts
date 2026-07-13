@@ -10,7 +10,7 @@ export type { AgentOptions, HandoffTarget } from './agent.js';
 export { Tool, tool, asTool } from './tools.js';
 export type { ToolFn, ToolOptions, JsonSchema } from './tools.js';
 
-export { run, Runner, uuidHex } from './runner.js';
+export { run, Runner, uuidHex, ContextBudgetFallback } from './runner.js';
 export type { RunOptions } from './runner.js';
 
 export {
@@ -60,6 +60,11 @@ export {
   track,
   report,
   configure,
+  // what a pre-flight on_exceed="downgrade" / token clamp rerouted (0.10.0)
+  downgrades,
+  clamps,
+  // the IDENTICAL @cendor/acttrace guard (dual-shape since acttrace 0.6.0: raw interceptor or
+  // `guard(opts, fn)` scope form) — Object.is(sdk.guard, acttrace.guard)
   guard,
   registerModelPrice,
   BudgetExceeded,
@@ -75,8 +80,8 @@ export {
   Verdict,
   GuardrailDecision,
   rules,
-  // V04: curated injection starter + the policy JSON Schema (rules.intent / rules.customCategory
-  // ride the `rules` namespace above; judge.intentPrompt via @cendor/guardrails' `judge`).
+  // V04: curated injection starter + the policy JSON Schema + loadPolicy (config-as-data, 0.10.0).
+  loadPolicy,
   presets,
   policySchema,
   // BYO LLM-judge helpers — one-import parity with Python's `cendor.sdk.judge` /
@@ -84,7 +89,7 @@ export {
   judge,
   taskAdherence,
 } from './governance.js';
-export type { Guardrail, Context, Check, Stage, Action } from './governance.js';
+export type { Guardrail, Context, Check, Stage, Action, GuardOptions } from './governance.js';
 
 export {
   resolveProvider,

@@ -1,10 +1,14 @@
 /**
  * Retrieval & embeddings — the TS port of `cendor.sdk.rag` / `embeddings`. `embed()` calls an
- * OpenAI-shaped embeddings client and emits a governed `LLMCall` on the bus (usage + cost).
+ * OpenAI-shaped embeddings client through `instrument()`, so `@cendor/core` (≥ 0.6) captures the
+ * governed `LLMCall` (`metadata.embedding = true`, usage + cost) and the **pre-flight interceptor
+ * pass applies** — a keyless `withBudget({ usd, onExceed: 'block' }, …)` refuses an over-budget
+ * embed before it fires, and a `guard(...)` can redact the text first. The SDK owns the *feature*
+ * (it is the caller); the *capture* is core's — the hand-built emit path was deleted in 0.10.0.
  * `VectorIndex` is a dependency-free in-memory cosine index; `as_retriever` wires it into
  * `Agent({ retriever })`.
  */
-import { LLMCall, Money, Usage, bus, currentTraceId, prices } from '@cendor/core';
+import { instrument } from '@cendor/core';
 
 export type Embedder = (texts: string[]) => number[][] | Promise<number[][]>;
 
@@ -23,41 +27,25 @@ export interface EmbedOptions {
   dimensions?: number;
 }
 
-/** Embed inputs via an OpenAI-shaped client, emitting a governed LLMCall. Returns one vector per input. */
+/**
+ * Embed inputs via an OpenAI-shaped client. The call rides `instrument()` (idempotent), so core
+ * emits the governed `LLMCall` (`metadata.embedding = true`) and pre-flight budgets/guards apply.
+ * Returns one vector per input.
+ */
 export async function embed(
   model: string,
   inputs: string | string[],
   opts: EmbedOptions,
 ): Promise<number[][]> {
   const list = typeof inputs === 'string' ? [inputs] : inputs;
-  const resp = await opts.client.embeddings.create({
+  const client = instrument(opts.client);
+  const resp = await client.embeddings.create({
     model,
     input: list,
     ...(opts.dimensions ? { dimensions: opts.dimensions } : {}),
   });
   const data = (get(resp, 'data') as unknown[]) ?? [];
-  const vectors = data.map((d) => (get(d, 'embedding') as number[]) ?? []);
-  const usage = get(resp, 'usage');
-  const promptTokens =
-    (get(usage, 'prompt_tokens') as number) ?? (get(usage, 'total_tokens') as number) ?? 0;
-  const call = new LLMCall({
-    id: globalThis.crypto.randomUUID().replace(/-/g, ''),
-    provider: 'openai',
-    model,
-    messages: [],
-    traceId: currentTraceId(),
-    ts: new Date(),
-  });
-  call.usage = new Usage({ inputTokens: promptTokens });
-  try {
-    call.cost = prices.estimate(model, promptTokens);
-    call.metadata.cost_estimated = true;
-  } catch {
-    call.cost = Money.zero();
-  }
-  call.metadata.embedding = true;
-  bus.emit(call);
-  return vectors;
+  return data.map((d) => (get(d, 'embedding') as number[]) ?? []);
 }
 
 /** Async alias (JS is async-first). */
