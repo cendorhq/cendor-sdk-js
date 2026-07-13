@@ -41,7 +41,7 @@ console.log(verify('audit.jsonl', { key: process.env.KEY })); // [true, "ok: ...
   release ships the matching `instrument()` detection; Azure AI Foundry and Foundry Local capture
   usage today (standard OpenAI client).
 - **Tools via zod** — `tool(fn, { parameters: z.object({...}) })` → each provider's native tool shape.
-- **Governance** (re-exported real libraries) — `budget`/`withBudget`, `track`, `report`, `guard`,
+- **Governance** (the identical re-exported libraries — CI-pinned since 0.10.0, incl. `guard`) — `budget`/`withBudget`, `track`, `report`, `guard`,
   `AuditLog`/`verify`, `registerModelPrice`, `BudgetExceeded`. A bare `run()` needs none of it.
 - **Guardrails** — `Agent({ guardrails: [...] })` gates all four stages. `rules` is one surface: the
   deterministic `@cendor/guardrails` built-ins (`keywordDeny`, `regexRule`, `urlAllowlist`/`urlDeny`,

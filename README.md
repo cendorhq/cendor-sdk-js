@@ -20,7 +20,10 @@ Using an AI coding assistant? `npx @cendor/init` (TS) / `uvx cendor-init` (Pytho
 > **The second door into [Cendor](https://github.com/cendorhq/cendor-libs).** One brand, two doors:
 > compose the [seven libraries](https://github.com/cendorhq/cendor-libs-js) beneath *your* framework, or
 > take the whole loop — governed — with this SDK. The `budget` / `guard` / `AuditLog` / … you import
-> here are the **real** `@cendor/*` library objects, re-exported for one-import convenience.
+> here are the **real** `@cendor/*` library objects, re-exported for one-import convenience — and
+> since 0.10.0 that is CI-verified: an identity test suite pins every re-export
+> (`Object.is(sdk.guard, acttrace.guard)`), the `rules` namespace carries the full library catalogue
+> (spotlight + the detection-tier adapters included), and `embed()` is governed pre-flight.
 
 ---
 
