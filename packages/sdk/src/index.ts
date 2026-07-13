@@ -1,7 +1,9 @@
 /**
- * `@cendor/sdk` — a governed agent in ~10 lines. The TS port of `cendor.sdk`. Hard-depends only on
- * `@cendor/core`; governance rides its bus/interceptor seams and the re-exported `@cendor/*` objects
- * are the real libraries. Imports stay flat (`import { Agent, run, tool } from '@cendor/sdk'`).
+ * `@cendor/sdk` — a governed agent in ~10 lines. The TS port of `cendor.sdk`. Governance rides
+ * `@cendor/core`'s bus/interceptor seams. The governance re-exports are the real `@cendor/*`
+ * objects; `guard` is acttrace's enforcement in the SDK's scope form, `rules` is the SDK's
+ * superset module, and the eval harness + session stores are SDK-owned. Imports stay flat
+ * (`import { Agent, run, tool } from '@cendor/sdk'`).
  */
 export { Agent } from './agent.js';
 export type { AgentOptions, HandoffTarget } from './agent.js';
