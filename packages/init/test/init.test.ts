@@ -86,6 +86,7 @@ describe('runInit', () => {
     runInit({ root, assistants: ['agents'], scaffold: true });
     expect(read('cendor-quickstart.mjs')).toContain('budget({ usd: 0.5');
     expect(read('cendor-quickstart.mjs')).toContain('instrument(new OpenAI())');
+    expect(read('cendor-quickstart.mjs')).toContain('OPENAI_API_KEY from your env');
   });
 
   it('--scaffold writes a python starter for a python project', () => {
@@ -93,6 +94,7 @@ describe('runInit', () => {
     runInit({ root, assistants: ['agents'], scaffold: true });
     expect(read('cendor_quickstart.py')).toContain('from cendor.core import instrument');
     expect(read('cendor_quickstart.py')).toContain('@budget(usd=0.50, on_exceed="raise")');
+    expect(read('cendor_quickstart.py')).toContain('Auth:     OPENAI_API_KEY from your env');
   });
 
   it('--scaffold writes a governed-agent starter when the SDK is present (node)', () => {
@@ -107,6 +109,7 @@ describe('runInit', () => {
     expect(body).toContain('withBudget(');
     expect(body).toContain('guard(');
     expect(body).toContain('rules.keywordDeny');
+    expect(body).toContain('OPENAI_API_KEY from your env, or apiKey on the Agent');
     // and NOT the bare libs starter
     expect(body).not.toContain('instrument(new OpenAI())');
   });
@@ -121,6 +124,7 @@ describe('runInit', () => {
     expect(body).toContain('from cendor.sdk import Agent');
     expect(body).toContain('max_usd=0.50');
     expect(body).toContain('guard(Policy.default()');
+    expect(body).toContain('Auth:     OPENAI_API_KEY from your env, or Agent(api_key=...)');
     expect(body).not.toContain('from cendor.core import instrument');
   });
 });

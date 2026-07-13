@@ -26,6 +26,7 @@ Call shapes that are easy to get wrong:
 - TS tokenguard sinks live at the `@cendor/tokenguard/sinks` subpath.
 - Python is a PEP 420 namespace — `from cendor.tokenguard import budget`; no top-level `cendor` module.
 - Provider SDKs are optional (Python extras, TS peer deps) — install only what you call.
+- SDK provider keys: the SDK builds the client, so use the provider's standard env var (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …) or `Agent(api_key=…)` / a pre-built `client=`. There is no Cendor key config.
 
 Honest limits: deterministic guardrails don't stop novel adversarial attacks; acttrace produces
 *evidence*, not a compliance guarantee. Full reference: https://cendor.ai/docs/for-ai-assistants

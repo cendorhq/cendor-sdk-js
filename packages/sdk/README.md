@@ -26,6 +26,10 @@ audit.detach();
 console.log(verify('audit.jsonl', { key: process.env.KEY })); // [true, "ok: ..."]
 ```
 
+**Auth:** `new OpenAI()` reads `OPENAI_API_KEY` from your environment — or pass `apiKey` on the
+`Agent` (or drop `client` and let the SDK build it). No Cendor-specific key.
+[Keys & providers →](https://cendor.ai/docs/sdk/providers#api-keys--credentials)
+
 ## What's implemented
 
 - **Agent loop** — `run(agent, input, opts)` (async), tool calling, `maxTurns`, structured output

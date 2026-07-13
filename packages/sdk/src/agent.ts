@@ -47,7 +47,16 @@ export interface AgentOptions {
   guardrailMode?: GuardrailMode;
   /** Per-agent USD spend cap (orchestrator-enforced). */
   maxUsd?: number | null;
+  /**
+   * Provider credential. There is **no Cendor key config** — the SDK builds the provider client for
+   * you. Resolves: this `apiKey` → the provider's standard env var (`OPENAI_API_KEY`,
+   * `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, the AWS credential chain for Bedrock, `HF_TOKEN`, the
+   * `AZURE_*` vars) → a keyless placeholder so offline flows (cassette replay, pre-flight budget
+   * blocks) work — a *live* call then fails with the provider's own 401. The SDK does not read
+   * `.env` files. See {@link https://cendor.ai/docs/sdk/providers#api-keys--credentials | providers}.
+   */
   apiKey?: string | null;
+  /** Endpoint override — a gateway or self-hosted URL (note the capital `URL`). */
   baseURL?: string | null;
   /** A pre-built provider SDK client (instrumented on adoption). */
   client?: unknown;
@@ -69,6 +78,7 @@ export interface AgentOptions {
  * const agent = new Agent({
  *   name: 'support',
  *   model: 'gpt-4o',
+ *   // key: process.env.OPENAI_API_KEY (or pass apiKey: …); the SDK builds the client — no Cendor key
  *   guardrails: [rules.keywordDeny(['ignore previous'], { action: 'block' })],
  *   maxUsd: 0.5,
  * });

@@ -54,6 +54,10 @@ Provider SDKs, `@opentelemetry/api`, and `@modelcontextprotocol/sdk` stay **opti
 
 ## A governed agent in 10 lines
 
+**Auth:** `new OpenAI()` reads `OPENAI_API_KEY` from your environment — or pass `apiKey` on the
+`Agent`, or drop the `client` and let the SDK build it. There's no Cendor-specific key. Full table:
+[Keys & providers →](https://cendor.ai/docs/sdk/providers#api-keys--credentials).
+
 ```ts
 import OpenAI from 'openai';
 import { Agent, run, tool, withBudget, guard, Policy, AuditLog } from '@cendor/sdk';

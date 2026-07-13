@@ -20,5 +20,7 @@ is `Decimal`/`decimal.js`, never `float`/`number`. `Context.assemble()` is sync 
 (`aassemble()` async), `await` in TS. Guardrail actions `block | redact | flag` (no `warn`);
 PII/secrets are acttrace detectors, not guardrail rules. Session store is in the SDK, casing differs
 (`SQLiteSessionStore` / `SqliteSessionStore`). TS tokenguard sinks: `@cendor/tokenguard/sinks`.
-Python is a PEP 420 namespace. Provider SDKs are optional. Deterministic guardrails don't stop novel
-attacks; acttrace is evidence, not a guarantee. Full reference: https://cendor.ai/docs/for-ai-assistants
+Python is a PEP 420 namespace. Provider SDKs are optional. SDK provider keys: the provider's standard
+env var (`OPENAI_API_KEY`) or `Agent(api_key=…)`, never a Cendor key config. Deterministic guardrails
+don't stop novel attacks; acttrace is evidence, not a guarantee. Full reference:
+https://cendor.ai/docs/for-ai-assistants

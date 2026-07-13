@@ -101,6 +101,9 @@ function cmdInit(root: string, opts: InitOptions): number {
 
   process.stdout.write('\nNext:\n');
   process.stdout.write(
+    '  • Set your provider key (e.g. OPENAI_API_KEY) in the env, or pass apiKey on the Agent.\n',
+  );
+  process.stdout.write(
     '  • Trust your editor’s hover/completion — every Cendor symbol ships an @example.\n',
   );
   process.stdout.write('  • Full trap sheet:  https://cendor.ai/docs/for-ai-assistants\n');

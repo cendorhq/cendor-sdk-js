@@ -113,6 +113,8 @@ const AMBIENT = [
   'azureClient',
   'bedrock',
   'armorClient',
+  // providers docs: an illustrative "read a key from your secret manager" helper (user-supplied).
+  'readSecret',
 ];
 
 // API names later snippets on a page use without re-importing (the page's earlier snippet
