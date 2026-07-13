@@ -1,0 +1,106 @@
+name: Pin bump
+
+# D2 (plan/PLAN-SDK-LIB-INHERITANCE.md): on npm, a 0.x caret never crosses a minor — so every
+# @cendor/* lib minor needs a coordinated @cendor/sdk pin bump or SDK installs silently stay a
+# minor behind (the M6 class). This workflow detects the lag daily and OPENS A PR with the bump +
+# a patch changeset. It NEVER merges: while these repos are private, push-to-main auto-publishes —
+# merging the PR IS the release, and that stays a human decision.
+
+on:
+  schedule:
+    - cron: '17 6 * * *' # daily, off the top of the hour
+  workflow_dispatch: {}
+
+permissions:
+  contents: write # push the pin-bump branch
+  pull-requests: write # open the PR
+
+concurrency: pin-bump
+
+jobs:
+  pin-bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - name: Skip if a pin-bump PR is already open (idempotent)
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          open=$(gh pr list --head pin-bump --state open --json number --jq 'length')
+          echo "open=$open" >> "$GITHUB_OUTPUT"
+          if [ "$open" != "0" ]; then
+            echo "a pin-bump PR is already open — nothing to do"
+          fi
+
+      - name: Detect lagging @cendor/* pins
+        if: steps.existing.outputs.open == '0'
+        id: detect
+        run: |
+          BUMPS=""
+          for dep in $(node -e "
+            const p = require('./packages/sdk/package.json');
+            console.log(Object.keys(p.dependencies).filter(d => d.startsWith('@cendor/')).join(' '));
+          "); do
+            range=$(node -e "console.log(require('./packages/sdk/package.json').dependencies['$dep'])")
+            latest=$(npm view "$dep" version)
+            # in-range resolution: does the declared range already reach the latest version?
+            inrange=$(npm view "$dep@$range" version --json 2>/dev/null | node -e "
+              let s=''; process.stdin.on('data', d => s+=d).on('end', () => {
+                let v; try { v = JSON.parse(s); } catch { v = []; }
+                const list = Array.isArray(v) ? v : [v];
+                console.log(list.includes('$latest') ? 'yes' : 'no');
+              });
+            ")
+            if [ "$inrange" = "no" ]; then
+              echo "LAG: $dep $range -> latest $latest"
+              BUMPS="$BUMPS $dep@$latest"
+            fi
+          done
+          echo "bumps=${BUMPS# }" >> "$GITHUB_OUTPUT"
+
+      - name: Bump pins, refresh lockfile, write the changeset, open the PR
+        if: steps.existing.outputs.open == '0' && steps.detect.outputs.bumps != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUMPS: ${{ steps.detect.outputs.bumps }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b pin-bump
+          SUMMARY=""
+          for bump in $BUMPS; do
+            dep="${bump%@*}"
+            ver="${bump##*@}"
+            node -e "
+              const fs = require('fs');
+              const path = 'packages/sdk/package.json';
+              const p = JSON.parse(fs.readFileSync(path, 'utf8'));
+              p.dependencies['$dep'] = '^$ver';
+              fs.writeFileSync(path, JSON.stringify(p, null, 2) + '\n');
+            "
+            SUMMARY="$SUMMARY- \`$dep\` → \`^$ver\`"$'\n'
+          done
+          pnpm install --no-frozen-lockfile
+          cat > .changeset/pin-bump-$(date -u +%Y%m%d).md << EOF
+          ---
+          '@cendor/sdk': patch
+          ---
+
+          chore: bump @cendor/* pins to the latest published shelf (a 0.x caret never crosses a minor, so without this SDK installs silently stay a minor behind):
+
+          $SUMMARY
+          EOF
+          git add -A
+          git commit -m "chore: bump @cendor/* pins to the latest shelf"
+          git push -u origin pin-bump
+          gh pr create \
+            --title "chore: bump @cendor/* pins to the latest shelf" \
+            --body "$(printf 'Automated pin bump (pin-bump.yml). The declared ranges no longer reach the latest published versions:\n\n%s\n⚠️ **Merging this PR publishes @cendor/sdk** — while the repos are private, push-to-main runs changeset publish. Review, run the suite, then merge deliberately.' "$SUMMARY")"
