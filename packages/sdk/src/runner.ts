@@ -106,14 +106,62 @@ function schemaFromOutputType(outputType: unknown): JsonSchema | null {
   return null;
 }
 
+const NO_JSON = Symbol('no-json');
+
+/**
+ * Parse JSON from model output that may be wrapped: a ```json fenced block, or prose around a single
+ * JSON value. Providers without a native JSON-schema mode (Anthropic, Ollama-without-format, HF) very
+ * commonly fence their output, so a bare `JSON.parse` returned the raw string and silently broke the
+ * declared `outputType`. Returns {@link NO_JSON} when nothing parseable is found.
+ */
+function looseJsonParse(text: string): unknown {
+  const s = text.trim();
+  try {
+    return JSON.parse(s);
+  } catch {
+    // fall through to fence-stripping / balanced extraction
+  }
+  // ```json … ``` or ``` … ``` fenced block
+  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence?.[1]) {
+    try {
+      return JSON.parse(fence[1].trim());
+    } catch {
+      // fall through
+    }
+  }
+  // first balanced { … } or [ … ], string/escape aware
+  const start = s.search(/[[{]/);
+  if (start >= 0) {
+    const open = s[start] as '{' | '[';
+    const close = open === '{' ? '}' : ']';
+    let depth = 0;
+    let inStr = false;
+    let esc = false;
+    for (let i = start; i < s.length; i++) {
+      const ch = s[i];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (ch === '\\') esc = true;
+        else if (ch === '"') inStr = false;
+      } else if (ch === '"') inStr = true;
+      else if (ch === open) depth++;
+      else if (ch === close && --depth === 0) {
+        try {
+          return JSON.parse(s.slice(start, i + 1));
+        } catch {
+          return NO_JSON;
+        }
+      }
+    }
+  }
+  return NO_JSON;
+}
+
 function parseOutput(content: string | null, outputType: unknown): unknown {
   if (!outputType || content === null) return content;
-  let data: unknown = content;
-  try {
-    data = JSON.parse(content);
-  } catch {
-    return content; // provider didn't emit JSON — return the prose
-  }
+  const data = looseJsonParse(content);
+  if (data === NO_JSON) return content; // provider didn't emit JSON — return the prose
   if (isZodSchema(outputType)) {
     try {
       return outputType.parse(data);

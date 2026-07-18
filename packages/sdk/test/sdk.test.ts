@@ -84,6 +84,32 @@ describe('@cendor/sdk — governed single agent', () => {
     expect(result.output).toEqual({ city: 'Paris', temp: 21 });
   });
 
+  it('parses structured output wrapped in a ```json fence (FINDINGS 2026-07-18 B6)', async () => {
+    // Providers without a native JSON-schema mode (Anthropic/Ollama/HF) commonly fence their JSON;
+    // parseOutput must strip the fence instead of silently returning the raw string.
+    const agent = new Agent({
+      name: 's',
+      model: 'gpt-4o',
+      outputType: z.object({ city: z.string(), temp: z.number() }),
+      client: stubOpenAI([openaiChat({ content: '```json\n{"city":"Paris","temp":21}\n```' })]),
+    });
+    const result = await run(agent, 'weather?');
+    expect(result.output).toEqual({ city: 'Paris', temp: 21 });
+  });
+
+  it('extracts a JSON object embedded in prose (FINDINGS 2026-07-18 B6)', async () => {
+    const agent = new Agent({
+      name: 's',
+      model: 'gpt-4o',
+      outputType: z.object({ city: z.string(), temp: z.number() }),
+      client: stubOpenAI([
+        openaiChat({ content: 'Here you go: {"city":"Paris","temp":21} — hope that helps!' }),
+      ]),
+    });
+    const result = await run(agent, 'weather?');
+    expect(result.output).toEqual({ city: 'Paris', temp: 21 });
+  });
+
   it('records live progress via onStep and never breaks on a throwing hook', async () => {
     const seen: string[] = [];
     const agent = new Agent({

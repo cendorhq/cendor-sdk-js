@@ -298,9 +298,9 @@ describe('tool formatting', () => {
     const anthropic = getProvider('anthropic').formatTools([search]) as { name: string }[];
     expect(anthropic[0]!.name).toBe('search');
     const gemini = getProvider('google').formatTools([search]) as {
-      function_declarations: { name: string }[];
+      functionDeclarations: { name: string }[];
     }[];
-    expect(gemini[0]!.function_declarations[0]!.name).toBe('search');
+    expect(gemini[0]!.functionDeclarations[0]!.name).toBe('search');
     const bedrock = getProvider('bedrock').formatTools([search]) as {
       tools: { toolSpec: { name: string } }[];
     };
@@ -349,21 +349,33 @@ describe('build_kwargs', () => {
     const gk = new GeminiProvider().buildKwargs('gemini-2.0-flash', [], [], '', {
       jsonMode: true,
       outputSchema: schema,
-    }) as { config: { response_mime_type: string; response_schema: unknown } };
-    expect(gk.config.response_mime_type).toBe('application/json');
-    expect(gk.config.response_schema).toEqual(schema);
+    }) as { config: { responseMimeType: string; responseSchema: unknown } };
+    expect(gk.config.responseMimeType).toBe('application/json');
+    expect(gk.config.responseSchema).toEqual(schema);
   });
 
   it('Gemini/Bedrock build_kwargs carry the tool history (P0 regression)', () => {
     const hist = toolHistory();
     const gk = new GeminiProvider().buildKwargs('gemini-2.0-flash', hist, [], '', {});
     const gContents = JSON.stringify(gk.contents);
-    expect(gContents).toContain('function_call');
+    expect(gContents).toContain('functionCall');
     expect(gContents).toContain('Sunny');
     const bk = new BedrockProvider().buildKwargs('meta.llama', hist, [], '', {});
     const bMessages = JSON.stringify(bk.messages);
     expect(bMessages).toContain('toolUse');
     expect(bMessages).toContain('Sunny');
+  });
+
+  it('Ollama re-hydrates tool-call arguments to an object (FINDINGS 2026-07-18 B4)', () => {
+    // Canonical history stores function.arguments as a JSON string; the ollama client rejects a
+    // string ("Value looks like object, but can't find closing '}' symbol") and 400s the replay turn.
+    const ok = new OllamaProvider().buildKwargs('llama3.2', toolHistory(), [], '', {}) as {
+      messages: { role: string; tool_calls?: { function: { arguments: unknown } }[] }[];
+    };
+    const asst = ok.messages.find((m) => m.role === 'assistant')!;
+    const args = asst.tool_calls![0]!.function.arguments;
+    expect(typeof args).toBe('object');
+    expect(args).toEqual({ city: 'Paris' });
   });
 });
 
@@ -402,16 +414,16 @@ describe('canonical → provider translators', () => {
     expect(contents[0]).toEqual({ role: 'user', parts: [{ text: 'weather in Paris?' }] });
     const modelTurn = contents[1]!;
     expect(modelTurn.role).toBe('model');
-    const fc = (modelTurn.parts as { function_call?: { name: string; args: unknown } }[]).find(
-      (p) => p.function_call,
-    )!.function_call!;
+    const fc = (modelTurn.parts as { functionCall?: { name: string; args: unknown } }[]).find(
+      (p) => p.functionCall,
+    )!.functionCall!;
     expect(fc.name).toBe('get_weather');
     expect(fc.args).toEqual({ city: 'Paris' });
     const respTurn = contents[2]!;
     expect(respTurn.role).toBe('user');
     const fr = (
-      respTurn.parts as { function_response?: { name: string; response: { result: string } } }[]
-    ).find((p) => p.function_response)!.function_response!;
+      respTurn.parts as { functionResponse?: { name: string; response: { result: string } } }[]
+    ).find((p) => p.functionResponse)!.functionResponse!;
     expect(fr.name).toBe('get_weather');
     expect(fr.response.result).toContain('Sunny');
   });
@@ -468,15 +480,15 @@ describe('multimodal content translation', () => {
       ),
     ).toBe(true);
     expect(blocks.some((b) => b.type === 'image' && b.source?.type === 'url')).toBe(true);
-    // Gemini: text part + inline_data + file_data.
+    // Gemini: text part + inlineData + fileData (camelCase — @google/genai drops snake_case).
     const parts = canonicalToGemini(msg)[0]!.parts as {
       text?: string;
-      inline_data?: { mime_type: string };
-      file_data?: unknown;
+      inlineData?: { mimeType: string };
+      fileData?: unknown;
     }[];
     expect(parts).toContainEqual({ text: 'what is this?' });
-    expect(parts.some((p) => p.inline_data && p.inline_data.mime_type === 'image/png')).toBe(true);
-    expect(parts.some((p) => p.file_data)).toBe(true);
+    expect(parts.some((p) => p.inlineData && p.inlineData.mimeType === 'image/png')).toBe(true);
+    expect(parts.some((p) => p.fileData)).toBe(true);
     // Bedrock: text kept (image bytes out of scope there).
     const bContent = canonicalToBedrock(msg)[0]!.content as { text: string }[];
     expect(bContent[0]!.text).toBe('what is this?');

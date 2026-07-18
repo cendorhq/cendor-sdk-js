@@ -54,6 +54,29 @@ export function toolResultMessage(toolCallId: string, name: string, content: str
   return { role: 'tool', tool_call_id: toolCallId, name, content };
 }
 
+/**
+ * Map a canonical message onto the Ollama wire shape: assistant `tool_calls` keep OpenAI's structure
+ * except `function.arguments`, which Ollama wants as an object (the canonical form is a JSON string).
+ * Every other message passes through unchanged.
+ */
+export function ollamaMessage(m: Message): Message {
+  const tcs = m.tool_calls;
+  if (m.role !== 'assistant' || !Array.isArray(tcs)) return m;
+  return {
+    ...m,
+    tool_calls: tcs.map((tc) => {
+      const fn = get(tc, 'function');
+      return {
+        ...(tc as Record<string, unknown>),
+        function: {
+          name: (get(fn, 'name') as string) ?? '',
+          arguments: loadsArgs(get(fn, 'arguments')),
+        },
+      };
+    }),
+  };
+}
+
 function loadsArgs(raw: unknown): Record<string, unknown> {
   if (raw && typeof raw === 'object') return raw as Record<string, unknown>;
   if (typeof raw === 'string') {
@@ -167,9 +190,9 @@ export function geminiParts(content: unknown): unknown[] {
     const url = imageUrl(p);
     if (url?.startsWith('data:')) {
       const { mediaType, data } = parseDataUrl(url);
-      parts.push({ inline_data: { mime_type: mediaType, data } });
+      parts.push({ inlineData: { mimeType: mediaType, data } });
     } else if (url) {
-      parts.push({ file_data: { file_uri: url } });
+      parts.push({ fileData: { fileUri: url } });
     }
   }
   return parts.length > 0 ? parts : [{ text: '' }];
@@ -595,8 +618,9 @@ export function canonicalToGemini(messages: Message[]): Message[] {
   for (const m of messages) {
     const role = m.role;
     if (role === 'tool') {
+      // camelCase `functionResponse` — the snake_case key is dropped by @google/genai.
       pending.push({
-        function_response: {
+        functionResponse: {
           name: (m.name as string) ?? '',
           response: { result: stringify(m.content) },
         },
@@ -612,7 +636,7 @@ export function canonicalToGemini(messages: Message[]): Message[] {
         for (const tc of tcs) {
           const fn = get(tc, 'function');
           parts.push({
-            function_call: {
+            functionCall: {
               name: (get(fn, 'name') as string) ?? '',
               args: loadsArgs(get(fn, 'arguments')),
             },
@@ -773,7 +797,11 @@ export class GeminiProvider extends BaseProvider {
   }
 
   formatTools(tools: Tool[]): unknown {
-    return tools.length > 0 ? [{ function_declarations: tools.map((t) => t.toGemini()) }] : null;
+    // `@google/genai` is camelCase-only and drops unknown request keys silently, so the declarations
+    // list key must be `functionDeclarations` (snake_case `function_declarations` is ignored → the
+    // model never sees the tools). The SDK strips non-Gemini JSON-schema keys (e.g. additionalProperties)
+    // client-side, so the schema itself needs no sanitizing here (unlike the Python google-genai path).
+    return tools.length > 0 ? [{ functionDeclarations: tools.map((t) => t.toGemini()) }] : null;
   }
 
   buildKwargs(
@@ -784,17 +812,19 @@ export class GeminiProvider extends BaseProvider {
     opts: BuildKwargsOptions,
   ): Record<string, unknown> {
     const contents = canonicalToGemini(messages);
+    // camelCase config keys — `@google/genai` ignores snake_case (`system_instruction`,
+    // `max_output_tokens`, …), which silently dropped the system prompt, token cap and JSON mode.
     const config: Record<string, unknown> = {};
-    if (instructions) config.system_instruction = instructions;
+    if (instructions) config.systemInstruction = instructions;
     if (opts.temperature != null) config.temperature = opts.temperature;
-    if (opts.maxTokens != null) config.max_output_tokens = opts.maxTokens;
+    if (opts.maxTokens != null) config.maxOutputTokens = opts.maxTokens;
     const formatted = this.formatTools(tools);
     if (formatted) {
       config.tools = formatted;
     } else if (opts.jsonMode) {
       // Gemini can't combine function tools with a forced JSON schema.
-      config.response_mime_type = 'application/json';
-      if (opts.outputSchema) config.response_schema = opts.outputSchema;
+      config.responseMimeType = 'application/json';
+      if (opts.outputSchema) config.responseSchema = opts.outputSchema;
     }
     const kwargs: Record<string, unknown> = { model, contents };
     if (Object.keys(config).length > 0) kwargs.config = config;
@@ -809,7 +839,9 @@ export class GeminiProvider extends BaseProvider {
     for (const p of parts) {
       const t = get(p, 'text');
       if (t) textParts.push(String(t));
-      const fc = get(p, 'function_call');
+      // @google/genai returns camelCase `functionCall`; keep the snake_case read as a fallback for
+      // recorded/cassette fixtures shaped like the raw REST payload.
+      const fc = get(p, 'functionCall') ?? get(p, 'function_call');
       if (fc) {
         toolCalls.push({
           id: `call_${toolCalls.length}`,
@@ -823,7 +855,7 @@ export class GeminiProvider extends BaseProvider {
     return {
       content,
       toolCalls,
-      finishReason: (get(cand, 'finish_reason') as string) ?? null,
+      finishReason: ((get(cand, 'finishReason') ?? get(cand, 'finish_reason')) as string) ?? null,
       raw: response,
     };
   }
@@ -934,7 +966,11 @@ export class OllamaProvider extends BaseProvider {
   ): Record<string, unknown> {
     const wire: Message[] = [];
     if (instructions) wire.push({ role: 'system', content: instructions });
-    wire.push(...messages);
+    // The canonical history stores tool-call `function.arguments` as a JSON *string* (OpenAI wire
+    // shape). The ollama client requires an object there and 400s on a string ("Value looks like
+    // object, but can't find closing '}' symbol"), which killed the tool loop on the replay turn.
+    // Re-hydrate arguments to objects for the ollama wire.
+    wire.push(...messages.map(ollamaMessage));
     const kwargs: Record<string, unknown> = { model, messages: wire };
     const formatted = this.formatTools(tools);
     if (formatted) kwargs.tools = formatted;
