@@ -428,6 +428,33 @@ describe('canonical → provider translators', () => {
     expect(fr.response.result).toContain('Sunny');
   });
 
+  it('Gemini round-trips the thought signature (FINDINGS 2026-07-19 B7)', () => {
+    // gemini-3.x returns a thoughtSignature sibling of functionCall that must be echoed back on the
+    // replayed call, else turn 2 400s ("missing thought_signature"). parse() must capture it and
+    // canonicalToGemini() must re-emit it.
+    const resp = {
+      candidates: [
+        {
+          finish_reason: 'STOP',
+          content: {
+            parts: [
+              {
+                functionCall: { name: 'get_weather', args: { city: 'Paris' } },
+                thoughtSignature: 'SIG123',
+              },
+            ],
+          },
+        },
+      ],
+    };
+    const parsed = new GeminiProvider().parse(resp);
+    expect(parsed.toolCalls[0]!.thoughtSignature).toBe('SIG123');
+    // thread it through canonical history and confirm the sibling is re-emitted
+    const hist = [assistantMessage(null, parsed.toolCalls)];
+    const parts = canonicalToGemini(hist)[0]!.parts as { thoughtSignature?: unknown }[];
+    expect(parts.find((p) => p.thoughtSignature)?.thoughtSignature).toBe('SIG123');
+  });
+
   it('Bedrock tool round-trip', () => {
     const wire = canonicalToBedrock(toolHistory());
     expect(wire[0]).toEqual({ role: 'user', content: [{ text: 'weather in Paris?' }] });

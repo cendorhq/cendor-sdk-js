@@ -4,7 +4,7 @@
  * normalized provider view (`ParsedResponse`, `ToolInvocation`), the run result model (`Step`,
  * `Result`/`Run`), and the streaming events.
  */
-import { LLMCall, Money, ToolCall, Usage, sumMoney, sumUsage } from '@cendor/core';
+import { LLMCall, Money, ToolCall, type Usage, sumMoney, sumUsage } from '@cendor/core';
 import type { GuardrailDecision } from '@cendor/guardrails';
 
 export { LLMCall, Money, ToolCall, sumMoney };
@@ -18,6 +18,8 @@ export interface ToolInvocation {
   id: string;
   name: string;
   arguments: Record<string, unknown>;
+  /** Provider-opaque token (Gemini 3.x) echoed back on the replayed call; absent for other providers. */
+  thoughtSignature?: unknown;
 }
 
 /** The SDK-normalized view of a provider response. */

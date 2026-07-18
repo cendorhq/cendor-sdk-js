@@ -44,6 +44,9 @@ export function assistantMessage(content: string | null, toolCalls: ToolInvocati
       id: tc.id,
       type: 'function',
       function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
+      // provider-opaque token round-tripped verbatim (Gemini 3.x thought signatures); present only
+      // when the provider returned one, ignored by every other adapter.
+      ...(tc.thoughtSignature != null ? { thought_signature: tc.thoughtSignature } : {}),
     }));
   }
   return msg;
@@ -635,12 +638,17 @@ export function canonicalToGemini(messages: Message[]): Message[] {
       if (Array.isArray(tcs)) {
         for (const tc of tcs) {
           const fn = get(tc, 'function');
-          parts.push({
+          const part: Record<string, unknown> = {
             functionCall: {
               name: (get(fn, 'name') as string) ?? '',
               args: loadsArgs(get(fn, 'arguments')),
             },
-          });
+          };
+          // Re-emit the Gemini 3.x thought signature as a sibling of functionCall (required to
+          // replay a tool call — see ToolInvocation.thoughtSignature).
+          const sig = get(tc, 'thought_signature');
+          if (sig != null) part.thoughtSignature = sig;
+          parts.push(part);
         }
       }
       out.push({ role: 'model', parts: parts.length > 0 ? parts : [{ text: '' }] });
@@ -847,6 +855,9 @@ export class GeminiProvider extends BaseProvider {
           id: `call_${toolCalls.length}`,
           name: (get(fc, 'name') as string) ?? '',
           arguments: (get(fc, 'args') as Record<string, unknown>) ?? {},
+          // Gemini 3.x returns a thoughtSignature sibling of functionCall that MUST be echoed back on
+          // the replayed call, else the next turn 400s ("missing thought_signature").
+          thoughtSignature: get(p, 'thoughtSignature') ?? get(p, 'thought_signature') ?? undefined,
         });
       }
     }
