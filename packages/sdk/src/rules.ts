@@ -140,8 +140,14 @@ export interface PiiOptions {
  * `guard()` never sees.
  */
 export function pii(policy?: Policy | null, opts: PiiOptions = {}): Guardrail {
-  const { action = 'redact', stage = DEFAULT_STAGES, name = 'pii', timeout, onError, metadata } =
-    opts;
+  const {
+    action = 'redact',
+    stage = DEFAULT_STAGES,
+    name = 'pii',
+    timeout,
+    onError,
+    metadata,
+  } = opts;
   const resolved = policy ?? Policy.default();
   return bridge({ name, stage, action, scanPolicy: resolved, timeout, onError, metadata });
 }
@@ -164,8 +170,14 @@ export interface SecretsOptions {
  * record instead. A convenience wrapper over {@link pii} with a secrets-only policy.
  */
 export function secrets(opts: SecretsOptions = {}): Guardrail {
-  const { action = 'redact', stage = DEFAULT_STAGES, name = 'secrets', timeout, onError, metadata } =
-    opts;
+  const {
+    action = 'redact',
+    stage = DEFAULT_STAGES,
+    name = 'secrets',
+    timeout,
+    onError,
+    metadata,
+  } = opts;
   const scoped = new Policy({ secret: action === 'redact' ? 'redact' : 'flag' }, 'allow');
   return bridge({
     name,

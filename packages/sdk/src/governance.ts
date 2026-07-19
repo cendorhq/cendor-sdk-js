@@ -14,7 +14,16 @@
  * ```
  */
 import { Dec, prices } from '@cendor/core';
-import { BudgetExceeded, budget, clamps, configure, downgrades, report, track, withBudget } from '@cendor/tokenguard';
+import {
+  BudgetExceeded,
+  budget,
+  clamps,
+  configure,
+  downgrades,
+  report,
+  track,
+  withBudget,
+} from '@cendor/tokenguard';
 import type { Agent } from './agent.js';
 
 export { budget, withBudget, track, report, configure, downgrades, clamps, BudgetExceeded };
