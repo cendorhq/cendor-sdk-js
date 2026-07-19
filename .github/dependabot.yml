@@ -30,7 +30,6 @@ updates:
       # biome 2: config-migration major — its own separate decision.
       - dependency-name: "@biomejs/biome"
         update-types: ["version-update:semver-major"]
-      # @anthropic-ai/sdk is 0.x (majors ride the minor slot, so semver-major never matches):
-      # pin by range until a capture-impact study clears a bump past 0.32.x.
-      - dependency-name: "@anthropic-ai/sdk"
-        versions: [">=0.33.0"]
+      # NOTE: the @anthropic-ai/sdk 0.x range hold that used to sit here was removed once its
+      # capture-impact study (plan/REPORT-ANTHROPIC-SDK-MAJOR-2026-07-19.md) cleared the bump —
+      # @anthropic-ai/sdk is now bumped to ^0.112.3 (cendor-sdk-js PR #17) and tracks normally.
