@@ -15,3 +15,21 @@ updates:
     groups:
       dev-dependencies:
         dependency-type: development
+    # Deferred majors — see plan/REPORT-TS7-OPENAI6-FEASIBILITY-2026-07-19.md §7.3.
+    # (openai and vitest are deliberately NOT ignored — handled as manual bumps.)
+    ignore:
+      # TS 7: revisit at 7.1 (new compiler API) after ecosystem soak.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      # @types/node: track the lowest supported runtime (Node 22), not Node 26.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      # undici 8 requires Node >=22.19; the Node 20 CI leg still exists (Node-matrix decision).
+      - dependency-name: "undici"
+        update-types: ["version-update:semver-major"]
+      # biome 2: config-migration major — its own separate decision.
+      - dependency-name: "@biomejs/biome"
+        update-types: ["version-update:semver-major"]
+      # NOTE: the @anthropic-ai/sdk 0.x range hold that used to sit here was removed once its
+      # capture-impact study (plan/REPORT-ANTHROPIC-SDK-MAJOR-2026-07-19.md) cleared the bump —
+      # @anthropic-ai/sdk is now bumped to ^0.112.3 (cendor-sdk-js PR #17) and tracks normally.
