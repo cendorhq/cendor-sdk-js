@@ -10,7 +10,6 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { AuditLog, Decision } from '@cendor/acttrace';
 import { LLMCall, ToolCall, bus, currentTraceId, installTraceContext, trace } from '@cendor/core';
 import type { Guardrail } from '@cendor/guardrails';
-import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { Agent } from './agent.js';
 import { type Checkpointer, asCheckpointer } from './checkpoint.js';
 import * as gate from './gate.js';
@@ -18,7 +17,7 @@ import { withScope } from './governance.js';
 import { type Provider, assistantMessage, toolResultMessage } from './providers.js';
 import { formatContext } from './rag.js';
 import { type RetryPolicy, callWithRetry } from './resilience.js';
-import type { JsonSchema, Tool } from './tools.js';
+import { type JsonSchema, type Tool, zodSchemaToJson } from './tools.js';
 import {
   type Message,
   type ParsedResponse,
@@ -96,12 +95,8 @@ function isZodSchema(x: unknown): x is { parse(v: unknown): unknown } {
 
 function schemaFromOutputType(outputType: unknown): JsonSchema | null {
   if (!outputType) return null;
-  if (isZodSchema(outputType)) {
-    const js = zodToJsonSchema(outputType as never, { $refStrategy: 'none' }) as JsonSchema;
-    // biome-ignore lint/performance/noDelete: strip the JSON-schema meta key
-    delete js.$schema;
-    return js;
-  }
+  // A duck-typed zod schema (v3 or v4) — zodSchemaToJson converts v4 and rejects v3 loudly.
+  if (isZodSchema(outputType)) return zodSchemaToJson(outputType as never);
   if (typeof outputType === 'object') return outputType as JsonSchema;
   return null;
 }

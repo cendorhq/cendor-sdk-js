@@ -6,6 +6,7 @@
 import { prices } from '@cendor/core';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import { z as z3 } from 'zod/v3';
 import { registerModelPrice } from '../src/index.js';
 import {
   AnthropicProvider,
@@ -559,6 +560,27 @@ describe('tool schema and pricing', () => {
     expect(addr.type).toBe('object');
     expect(new Set(Object.keys(addr.properties))).toEqual(new Set(['city', 'postcode']));
     expect(new Set(addr.required)).toEqual(new Set(['city', 'postcode']));
+  });
+
+  it('never emits an empty parameter schema for a non-empty zod 4 schema', () => {
+    const t = tool(() => 'ok', {
+      name: 'lookup',
+      description: 'Look something up.',
+      parameters: z.object({ query: z.string(), top_k: z.number().default(3) }),
+    });
+    const props = t.parameters.properties as Record<string, unknown>;
+    expect(Object.keys(props)).toEqual(['query', 'top_k']); // regression: SDK ≤0.10 silently emitted {}
+    expect(t.parameters.additionalProperties).toBe(false);
+    // `.default()` params describe model *input* → stay optional, not forced into `required`.
+    expect(t.parameters.required).toEqual(['query']);
+  });
+
+  it('rejects a zod 3 schema loudly instead of silently emitting an empty schema', () => {
+    const v3schema = z3.object({ city: z3.string() });
+    expect(() =>
+      // zod 3 schema deliberately passed where a zod 4 schema is required (compile-rejected too).
+      tool(() => 'ok', { name: 'weather', parameters: v3schema as never }),
+    ).toThrow(/zod 4/);
   });
 
   it('a registered price makes an unpriced deployment id cost > $0', () => {

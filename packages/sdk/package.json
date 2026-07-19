@@ -31,8 +31,7 @@
     "@cendor/guardrails": "^0.6.2",
     "@cendor/squeeze": "^0.2.8",
     "@cendor/tokenguard": "^0.2.8",
-    "zod": "^3.24.1",
-    "zod-to-json-schema": "^3.24.1"
+    "zod": "^4.0.0"
   },
   "optionalDependencies": {
     "better-sqlite3": "^12.11.1"
