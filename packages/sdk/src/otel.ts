@@ -50,12 +50,27 @@ function stepAttrs(span: Span, step: Step): void {
   }
 }
 
-/** Post-hoc `gen_ai.*` span tree from a finished run. Returns false (no-op) without OpenTelemetry. */
-export function spanTree(result: Result, tracer?: Tracer | null): boolean {
+/**
+ * Post-hoc `gen_ai.*` span tree from a finished run. Returns false (no-op) without OpenTelemetry.
+ * Pass `conversationId` (e.g. your session store key) to stamp `gen_ai.conversation.id` on the root
+ * `agent.run` span so multi-turn runs group as one conversation.
+ *
+ * @example
+ * ```ts
+ * import { spanTree } from '@cendor/sdk';
+ * spanTree(result, undefined, { conversationId: 'chat-42' });
+ * ```
+ */
+export function spanTree(
+  result: Result,
+  tracer?: Tracer | null,
+  opts: { conversationId?: string } = {},
+): boolean {
   const tr = tracerOf(tracer);
   if (!tr) return false;
   const root = tr.startSpan('agent.run');
   root.setAttribute('cendor.trace_id', result.traceId);
+  if (opts.conversationId) root.setAttribute('gen_ai.conversation.id', opts.conversationId);
   for (const step of result.steps) {
     const span = tr.startSpan(
       step.call instanceof LLMCall ? `chat ${step.name}` : `execute_tool ${step.name}`,
@@ -68,11 +83,26 @@ export function spanTree(result: Result, tracer?: Tracer | null): boolean {
   return true;
 }
 
-/** A disposable scope that emits a live child span per call. No-op without OpenTelemetry. */
-export function liveSpans(opts: { tracer?: Tracer | null; name?: string } = {}): { close(): void } {
+/**
+ * A disposable scope that emits a live child span per call. No-op without OpenTelemetry.
+ * Pass `conversationId` (e.g. your session store key) to stamp `gen_ai.conversation.id` on the root
+ * `agent.run` span so multi-turn runs group as one conversation.
+ *
+ * @example
+ * ```ts
+ * import { liveSpans } from '@cendor/sdk';
+ * const spans = liveSpans({ conversationId: 'chat-42' });
+ * // run your agent here…
+ * spans.close();
+ * ```
+ */
+export function liveSpans(
+  opts: { tracer?: Tracer | null; name?: string; conversationId?: string } = {},
+): { close(): void } {
   const tr = tracerOf(opts.tracer);
   if (!tr) return { close() {} };
   const root = tr.startSpan(opts.name ?? 'agent.run');
+  if (opts.conversationId) root.setAttribute('gen_ai.conversation.id', opts.conversationId);
   const sub = (event: unknown): void => {
     if (!(event instanceof LLMCall || event instanceof ToolCall)) return;
     const span = tr.startSpan(
