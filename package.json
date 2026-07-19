@@ -23,7 +23,7 @@
     "release": "pnpm build && changeset publish"
   },
   "devDependencies": {
-    "@anthropic-ai/sdk": "^0.32.1",
+    "@anthropic-ai/sdk": "^0.112.3",
     "@biomejs/biome": "1.9.4",
     "@changesets/cli": "^2.27.11",
     "@google/genai": "^2.10.0",
