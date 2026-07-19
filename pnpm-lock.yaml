@@ -62,8 +62,8 @@ importers:
         specifier: ^1.0.8
         version: 1.0.8(@cendor/squeeze@0.2.8)
       '@cendor/core':
-        specifier: ^0.6.0
-        version: 0.6.0
+        specifier: ^0.6.1
+        version: 0.6.1
       '@cendor/guardrails':
         specifier: ^0.6.2
         version: 0.6.2
@@ -172,8 +172,8 @@ packages:
       '@cendor/squeeze':
         optional: true
 
-  '@cendor/core@0.6.0':
-    resolution: {integrity: sha512-IoAWbmBGAQbEMl2Rnr0Cx/cXR7U4s+8azSmSPPGLLP9nf2FvrPWNR0K/aa4FWG2lZGa5N9tOVtzjuXmqefkPog==}
+  '@cendor/core@0.6.1':
+    resolution: {integrity: sha512-rXnmZeQ9TXoyg5oWsyYZy0KsybVaSitY++FLUF8THXrwgPR+jjAQgQftNpKIVDzWRygQIDfb/he/5vL/4miGhw==}
     engines: {node: '>=18'}
     peerDependencies:
       '@langchain/core': '>=0.3'
@@ -1505,42 +1505,42 @@ snapshots:
 
   '@cendor/acttrace@0.6.0':
     dependencies:
-      '@cendor/core': 0.6.0
+      '@cendor/core': 0.6.1
     transitivePeerDependencies:
       - '@langchain/core'
       - '@opentelemetry/api'
 
   '@cendor/cassette@0.2.8':
     dependencies:
-      '@cendor/core': 0.6.0
+      '@cendor/core': 0.6.1
     transitivePeerDependencies:
       - '@langchain/core'
       - '@opentelemetry/api'
 
   '@cendor/contextkit@1.0.8(@cendor/squeeze@0.2.8)':
     dependencies:
-      '@cendor/core': 0.6.0
+      '@cendor/core': 0.6.1
     optionalDependencies:
       '@cendor/squeeze': 0.2.8
     transitivePeerDependencies:
       - '@langchain/core'
       - '@opentelemetry/api'
 
-  '@cendor/core@0.6.0':
+  '@cendor/core@0.6.1':
     dependencies:
       decimal.js: 10.6.0
       js-tiktoken: 1.0.21
 
   '@cendor/guardrails@0.6.2':
     dependencies:
-      '@cendor/core': 0.6.0
+      '@cendor/core': 0.6.1
     transitivePeerDependencies:
       - '@langchain/core'
       - '@opentelemetry/api'
 
   '@cendor/squeeze@0.2.8':
     dependencies:
-      '@cendor/core': 0.6.0
+      '@cendor/core': 0.6.1
     optionalDependencies:
       better-sqlite3: 12.11.1
     transitivePeerDependencies:
@@ -1549,7 +1549,7 @@ snapshots:
 
   '@cendor/tokenguard@0.2.8':
     dependencies:
-      '@cendor/core': 0.6.0
+      '@cendor/core': 0.6.1
     optionalDependencies:
       better-sqlite3: 12.11.1
     transitivePeerDependencies:
