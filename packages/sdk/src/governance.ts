@@ -15,6 +15,7 @@
  */
 import { Dec, prices } from '@cendor/core';
 import {
+  BudgetEvent,
   BudgetExceeded,
   budget,
   clamps,
@@ -27,7 +28,10 @@ import {
 import type { Agent } from './agent.js';
 
 export { budget, withBudget, track, report, configure, downgrades, clamps, BudgetExceeded };
-export { AuditLog, verify, Policy, PolicyViolation, guard } from '@cendor/acttrace';
+// BudgetEvent (@cendor/tokenguard 0.3): a pre-flight budget action on the bus (blocked/downgraded/
+// clamped) — acttrace chains it, an OTelMirror surfaces it in your APM/SIEM.
+export { BudgetEvent };
+export { AuditLog, OTelMirror, verify, Policy, PolicyViolation, guard } from '@cendor/acttrace';
 export type { GuardOptions, OnBlock } from '@cendor/acttrace';
 export { trace, currentTraceId } from '@cendor/core';
 // The deterministic guardrails gate — the real @cendor/guardrails objects. `defineGuardrail` is the

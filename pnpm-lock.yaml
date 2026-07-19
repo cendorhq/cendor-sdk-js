@@ -53,8 +53,8 @@ importers:
   packages/sdk:
     dependencies:
       '@cendor/acttrace':
-        specifier: ^0.6.0
-        version: 0.6.0
+        specifier: ^0.7.0
+        version: 0.7.0
       '@cendor/cassette':
         specifier: ^0.2.8
         version: 0.2.8
@@ -71,8 +71,8 @@ importers:
         specifier: ^0.2.8
         version: 0.2.8
       '@cendor/tokenguard':
-        specifier: ^0.2.8
-        version: 0.2.8
+        specifier: ^0.3.0
+        version: 0.3.0
       zod:
         specifier: ^4.0.0
         version: 4.4.3
@@ -149,8 +149,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@cendor/acttrace@0.6.0':
-    resolution: {integrity: sha512-lTp89w38NxCE2EtiyfNiJiFp+lv8rMAyYhy9b73mLYMs8OU+9X9L9l5Zmc6R2EZkDHRGgWWwVTxNsZudbUI20A==}
+  '@cendor/acttrace@0.7.0':
+    resolution: {integrity: sha512-S5Zd90I4XvmpdD0hUip2k0kvvQy5KHyGoO5MVLB84OH6MjOZlSBM8yfX0LXbyrprXRQ+09ILY3/vUeElVAbwkw==}
     engines: {node: '>=18'}
     hasBin: true
     peerDependencies:
@@ -197,8 +197,8 @@ packages:
     resolution: {integrity: sha512-SEtB3L29uxsNm5bFcFcnakEuSGJhPFliCP3y2o31njkwOD58V8WkRaH4uv7AskaWuFUh41NK0PpGPbzRrQHQFw==}
     engines: {node: '>=18'}
 
-  '@cendor/tokenguard@0.2.8':
-    resolution: {integrity: sha512-fYzSIIEuyJF876ftlnz+oHLZ7PPHbgDMZP+w2a/UNjbfV7zZ2+qr+e9tWRe0A6dK/5CdIE2Jro83ToHVvadpvg==}
+  '@cendor/tokenguard@0.3.0':
+    resolution: {integrity: sha512-5Z/ungGAh1Y8MYivXK35I/EXbdDeK3wth2tuTVgLdNeyz9NuGyUHXr5HmU2Lxs1oVTg2ywrPNaObljAMKsR9SQ==}
     engines: {node: '>=18'}
     peerDependencies:
       '@opentelemetry/api': '>=1'
@@ -1503,7 +1503,7 @@ snapshots:
   '@biomejs/cli-win32-x64@1.9.4':
     optional: true
 
-  '@cendor/acttrace@0.6.0':
+  '@cendor/acttrace@0.7.0':
     dependencies:
       '@cendor/core': 0.6.1
     transitivePeerDependencies:
@@ -1547,7 +1547,7 @@ snapshots:
       - '@langchain/core'
       - '@opentelemetry/api'
 
-  '@cendor/tokenguard@0.2.8':
+  '@cendor/tokenguard@0.3.0':
     dependencies:
       '@cendor/core': 0.6.1
     optionalDependencies:
