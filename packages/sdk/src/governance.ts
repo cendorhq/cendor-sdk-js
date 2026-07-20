@@ -13,6 +13,7 @@
  * const check = judge.judge(async (system, user) => 'x', 'Trip on destructive shell commands.');
  * ```
  */
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { Dec, prices } from '@cendor/core';
 import {
   BudgetEvent,
@@ -112,15 +113,41 @@ export function registerModelPrice(model: string, opts: RegisterModelPriceOption
  * binds on every path, not just multi-agent. PY parity: `orchestration._scope`.
  */
 export function withScope<T>(agent: Agent, fn: () => Promise<T>): Promise<T> {
-  return track({ agent: agent.name }, () => {
-    if (agent.maxUsd != null) {
-      return withBudgetBlock(agent.maxUsd, fn);
-    }
-    return fn();
-  });
+  // The agent currently executing a turn, read by `otel.liveSpans` to stamp `gen_ai.agent.name` on
+  // each child span at emit time — robust regardless of bus fan-out order (the event is emitted
+  // synchronously inside this scope; AsyncLocalStorage propagates across the awaits in `fn`).
+  return activeAgent.run(agent.name, () =>
+    track({ agent: agent.name }, () => {
+      if (agent.maxUsd != null) {
+        return withBudgetBlock(agent.name, agent.maxUsd, fn);
+      }
+      return fn();
+    }),
+  );
 }
 
-async function withBudgetBlock<T>(usd: number, fn: () => Promise<T>): Promise<T> {
+const activeAgent = new AsyncLocalStorage<string>();
+
+/** The name of the agent currently executing a turn, or `''` outside a run. */
+export function currentAgent(): string {
+  return activeAgent.getStore() ?? '';
+}
+
+async function withBudgetBlock<T>(
+  agentName: string,
+  usd: number,
+  fn: () => Promise<T>,
+): Promise<T> {
   // onExceed:'block' never resolves to undefined (it throws BudgetExceeded), so the cast is sound.
-  return (await withBudget({ usd, onExceed: 'block' }, fn)) as T;
+  // Name the per-agent ceiling so a block by an agent's maxUsd is attributable in a monitor
+  // (which budget blocked what) — the @cendor/tokenguard 0.4 budget({ name }) hook (G10).
+  return (await withBudget(
+    {
+      usd,
+      onExceed: 'block',
+      name: `agent:${agentName} max_usd`,
+      description: `per-agent USD ceiling for ${agentName}`,
+    },
+    fn,
+  )) as T;
 }

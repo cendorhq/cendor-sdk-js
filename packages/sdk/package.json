@@ -24,13 +24,13 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@cendor/acttrace": "^0.7.0",
+    "@cendor/acttrace": "^0.8.0",
     "@cendor/cassette": "^0.2.8",
     "@cendor/contextkit": "^1.0.8",
     "@cendor/core": "^0.6.1",
-    "@cendor/guardrails": "^0.6.2",
+    "@cendor/guardrails": "^0.7.0",
     "@cendor/squeeze": "^0.2.8",
-    "@cendor/tokenguard": "^0.3.0",
+    "@cendor/tokenguard": "^0.4.0",
     "zod": "^4.0.0"
   },
   "optionalDependencies": {

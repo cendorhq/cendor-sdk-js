@@ -513,11 +513,11 @@ function makeCollector(
   const sub = (event: unknown): void => {
     if (!(event instanceof LLMCall || event instanceof ToolCall)) return;
     if (!match(event.traceId)) return;
-    const step = new Step(
-      agentFor(event.traceId),
-      event instanceof LLMCall ? 'llm' : 'tool',
-      event,
-    );
+    const agentName = agentFor(event.traceId);
+    // G13a: stamp which agent made the call into the event's free metadata (core types untouched).
+    const meta = (event as { metadata?: Record<string, unknown> }).metadata;
+    if (meta && typeof meta === 'object' && meta.agent === undefined) meta.agent = agentName;
+    const step = new Step(agentName, event instanceof LLMCall ? 'llm' : 'tool', event);
     steps.push(step);
     if (onStep) {
       try {
