@@ -4,8 +4,8 @@
  * span tree from a finished `Result`; `liveSpans` (v1.1) emits a child span the moment each call lands.
  */
 import { createRequire } from 'node:module';
-import { LLMCall, Money, ToolCall, bus } from '@cendor/core';
-import { currentAgent } from './governance.js';
+import { LLMCall, Money, ToolCall, bus, otel as coreOtel } from '@cendor/core';
+import { currentAgent, currentConversation } from './governance.js';
 import type { Result, Step } from './types.js';
 
 const require = createRequire(import.meta.url);
@@ -43,6 +43,36 @@ function resolve(tracer?: Tracer | null): { tr: Tracer; api: OtelApi | null } | 
 /** A context that parents children under `root` (real API only; `undefined` with an injected fake). */
 function childContext(api: OtelApi | null, root: Span): unknown {
   return api ? api.trace.setSpan(api.context.active(), root) : undefined;
+}
+
+/** Best-effort system prompt from a call's request kwargs — for providers where the system prompt
+ * is a kwarg (Anthropic `system`, Responses `instructions`, Gemini `system_instruction`, Bedrock
+ * `system`), not a message. For chat-completions/Ollama it's already in `call.messages`. */
+function systemFromCall(call: LLMCall): unknown {
+  const kw = (call.metadata as Record<string, unknown>)?.request_kwargs as
+    | Record<string, unknown>
+    | undefined;
+  if (!kw || typeof kw !== 'object') return undefined;
+  for (const key of ['instructions', 'system', 'system_instruction']) {
+    if (kw[key]) return kw[key];
+  }
+  const cfg = kw.config as Record<string, unknown> | undefined;
+  if (cfg && typeof cfg === 'object' && cfg.system_instruction) return cfg.system_instruction;
+  return undefined;
+}
+
+/** `gen_ai.*` content attrs for a chat call (G17/G18), or `{}` when capture is off. */
+function callContentAttrs(call: LLMCall): Record<string, string> {
+  return coreOtel.contentAttrs({
+    system: systemFromCall(call),
+    inputMessages: call.messages,
+    outputMessages: coreOtel.responseMessages(call),
+  });
+}
+
+/** Tool arg/result content attrs (G17), or `{}` when capture is off. */
+function toolContentAttrsFor(call: ToolCall): Record<string, string> {
+  return coreOtel.toolContentAttrs(call.arguments, call.result);
 }
 
 function stepAttrs(span: Span, step: Step, stepNo: number): void {
@@ -84,10 +114,13 @@ export function spanTree(
   const r = resolve(tracer);
   if (!r) return false;
   const { tr, api } = r;
+  // G19: fall back to the conversation id the runner propagated from the session key (explicit
+  // arg wins). semconv: only a real key is used, never a synthesized one.
+  const conversationId = opts.conversationId || result.conversationId || undefined;
   const root = tr.startSpan('agent.run');
   root.setAttribute('cendor.run.id', result.traceId);
   root.setAttribute('cendor.trace_id', result.traceId);
-  if (opts.conversationId) root.setAttribute('gen_ai.conversation.id', opts.conversationId);
+  if (conversationId) root.setAttribute('gen_ai.conversation.id', conversationId);
   if (opts.label) root.setAttribute('cendor.run.label', opts.label);
   const ctx = childContext(api, root); // nest call spans UNDER the run root (one trace)
   let stepNo = 0;
@@ -100,6 +133,12 @@ export function spanTree(
     );
     span.setAttribute('cendor.trace_id', step.traceId);
     stepAttrs(span, step, stepNo);
+    if (step.call instanceof LLMCall) {
+      if (step.call.metadata.replayed) span.setAttribute('cendor.replayed', true); // G22
+      for (const [k, v] of Object.entries(callContentAttrs(step.call))) span.setAttribute(k, v);
+    } else if (step.call instanceof ToolCall) {
+      for (const [k, v] of Object.entries(toolContentAttrsFor(step.call))) span.setAttribute(k, v);
+    }
     span.end();
   }
   root.end();
@@ -130,6 +169,7 @@ export function liveSpans(
   const r = resolve(opts.tracer);
   if (!r) return { close() {} };
   const { tr, api } = r;
+  coreOtel.enterLiveSpans(); // G20: the core bus→span emitter stands down while we own the spans
   const root = tr.startSpan(opts.name ?? 'agent.run');
   if (opts.conversationId) root.setAttribute('gen_ai.conversation.id', opts.conversationId);
   if (opts.label) root.setAttribute('cendor.run.label', opts.label);
@@ -139,6 +179,7 @@ export function liveSpans(
   let totalOutput = 0;
   let totalCost = Money.zero();
   let runIdSet = false;
+  let convSet = Boolean(opts.conversationId);
   const sub = (event: unknown): void => {
     if (!(event instanceof LLMCall || event instanceof ToolCall)) return;
     const traceId = event.traceId ?? '';
@@ -148,6 +189,15 @@ export function liveSpans(
       root.setAttribute('cendor.run.id', traceId);
       root.setAttribute('cendor.trace_id', traceId);
       runIdSet = true;
+    }
+    if (!convSet) {
+      // G19: learn the conversation id the runner propagated from the session key (no explicit
+      // arg was passed). Only a real key is used, never synthesized.
+      const cid = currentConversation();
+      if (cid) {
+        root.setAttribute('gen_ai.conversation.id', cid);
+        convSet = true;
+      }
     }
     stepNo += 1;
     // Agent name: the ambient current agent, falling back to the event's stamped metadata.
@@ -174,9 +224,12 @@ export function liveSpans(
         span.setAttribute('gen_ai.usage.cost', event.cost.toString());
         totalCost = totalCost.add(event.cost);
       }
+      if (event.metadata.replayed) span.setAttribute('cendor.replayed', true); // G22
+      for (const [k, v] of Object.entries(callContentAttrs(event))) span.setAttribute(k, v);
     } else {
       span.setAttribute('gen_ai.operation.name', 'execute_tool');
       span.setAttribute('gen_ai.tool.name', event.name);
+      for (const [k, v] of Object.entries(toolContentAttrsFor(event))) span.setAttribute(k, v);
     }
     span.end();
   };
@@ -184,6 +237,7 @@ export function liveSpans(
   return {
     close() {
       bus.unsubscribe(sub);
+      coreOtel.exitLiveSpans();
       // Usage/cost rollups on the root at close — parity with spanTree's finished totals.
       root.setAttribute('gen_ai.usage.input_tokens', totalInput);
       root.setAttribute('gen_ai.usage.output_tokens', totalOutput);

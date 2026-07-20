@@ -133,6 +133,21 @@ export function currentAgent(): string {
   return activeAgent.getStore() ?? '';
 }
 
+const activeConversation = new AsyncLocalStorage<string>();
+
+/** The conversation id of the run in flight (from the session key), or `''` (G19). Read by
+ * `otel.liveSpans` to stamp `gen_ai.conversation.id` on the root span. */
+export function currentConversation(): string {
+  return activeConversation.getStore() ?? '';
+}
+
+/** Run `fn` with the ambient conversation id set from a session's key (G19). If the session has no
+ * id, `fn` runs unchanged — a conversation id is never synthesized. */
+export function withConversation<T>(session: unknown, fn: () => Promise<T>): Promise<T> {
+  const cid = (session as { id?: string | null } | undefined)?.id;
+  return cid ? activeConversation.run(String(cid), fn) : fn();
+}
+
 async function withBudgetBlock<T>(
   agentName: string,
   usd: number,

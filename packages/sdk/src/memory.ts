@@ -13,8 +13,14 @@ const require = createRequire(import.meta.url);
 /** In-memory conversation memory with optional JSON persistence. */
 export class Session {
   messages: Message[];
-  constructor(messages: Message[] = []) {
+  /** Optional conversation id. `SqliteSessionStore.load` stamps the store key here; set it
+   * yourself (`new Session([], 'chat-42')`) for the in-memory case. When set, `run({ session })`
+   * propagates it as the run's `gen_ai.conversation.id` so a monitor groups a multi-turn
+   * conversation (G19). Never synthesized — a conversation id is always one you chose. */
+  id: string | null;
+  constructor(messages: Message[] = [], id: string | null = null) {
     this.messages = messages;
+    this.id = id;
   }
   add(message: Message): void {
     this.messages.push(message);
@@ -158,7 +164,7 @@ export interface SessionStore {
 export class MemorySessionStore implements SessionStore {
   private readonly map = new Map<string, Message[]>();
   load(id: string): Session {
-    return new Session([...(this.map.get(id) ?? [])]);
+    return new Session([...(this.map.get(id) ?? [])], id);
   }
   save(id: string, session: Session): void {
     this.map.set(id, session.snapshot());
@@ -200,8 +206,8 @@ export class SqliteSessionStore implements SessionStore {
     const row = this.db.prepare('SELECT messages FROM sessions WHERE id = ?').get(id) as
       | { messages?: string }
       | undefined;
-    if (!row) return new Session();
-    return new Session(JSON.parse(row.messages ?? '[]') as Message[]);
+    if (!row) return new Session([], id);
+    return new Session(JSON.parse(row.messages ?? '[]') as Message[], id);
   }
   save(id: string, session: Session): void {
     this.db

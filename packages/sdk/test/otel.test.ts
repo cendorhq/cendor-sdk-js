@@ -136,3 +136,90 @@ describe('liveSpans parity — run id, step, rollups, label (G13b/G14)', () => {
     expect(children.map((c) => c.attrs['cendor.step'])).toEqual([1, 2]);
   });
 });
+
+// --------------------------------------------- V3: opt-in content (G17/G18), G19 auto id, G22 replay
+
+import { otel } from '@cendor/core';
+
+describe('V3 content + sessions on spanTree/liveSpans', () => {
+  beforeEach(() => {
+    bus._reset();
+    otel.resetCapture();
+  });
+  afterEach(() => {
+    bus._reset();
+    otel.resetCapture();
+  });
+
+  function chatStep(): Step {
+    const call = new LLMCall({
+      id: '1',
+      provider: 'openai',
+      model: 'gpt-4o',
+      messages: [{ role: 'user', content: 'weather in Paris?' }],
+      traceId: 'run-1',
+    });
+    call.metadata.response = { choices: [{ message: { content: 'Sunny.' } }] };
+    return new Step('assistant', 'llm', call);
+  }
+
+  it('captures no content by default', () => {
+    const tracer = new FakeTracer();
+    spanTree(new Result({ output: 'ok', traceId: 'run-1', steps: [chatStep()] }), tracer);
+    const chat = tracer.spans[1];
+    expect(chat.attrs[otel.GENAI_INPUT_MESSAGES]).toBeUndefined();
+    expect(chat.attrs[otel.GENAI_OUTPUT_MESSAGES]).toBeUndefined();
+  });
+
+  it('captures input + output messages when opted in', () => {
+    otel.captureContent();
+    const tracer = new FakeTracer();
+    spanTree(new Result({ output: 'ok', traceId: 'run-1', steps: [chatStep()] }), tracer);
+    const chat = tracer.spans[1];
+    expect(String(chat.attrs[otel.GENAI_INPUT_MESSAGES])).toContain('weather in Paris');
+    expect(String(chat.attrs[otel.GENAI_OUTPUT_MESSAGES])).toContain('Sunny');
+  });
+
+  it('captures tool arg/result content when opted in', () => {
+    otel.captureContent();
+    const tracer = new FakeTracer();
+    const tool = new ToolCall({
+      id: 't',
+      name: 'get_weather',
+      arguments: { city: 'Paris' },
+      result: 'Sunny',
+      traceId: 'run-1',
+    });
+    spanTree(
+      new Result({ output: 'ok', traceId: 'run-1', steps: [new Step('a', 'tool', tool)] }),
+      tracer,
+    );
+    expect(String(tracer.spans[1].attrs[otel.CENDOR_TOOL_ARGUMENTS])).toContain('Paris');
+  });
+
+  it('reads conversationId from Result on spanTree (G19)', () => {
+    const tracer = new FakeTracer();
+    spanTree(
+      new Result({ output: 'ok', traceId: 'run-1', conversationId: 'chat-9', steps: [] }),
+      tracer,
+    );
+    expect(tracer.root().attrs['gen_ai.conversation.id']).toBe('chat-9');
+  });
+
+  it('stamps cendor.replayed on a replayed step (G22)', () => {
+    const tracer = new FakeTracer();
+    const call = new LLMCall({
+      id: '1',
+      provider: 'openai',
+      model: 'gpt-4o',
+      messages: [],
+      traceId: 'run-1',
+    });
+    call.metadata.replayed = true;
+    spanTree(
+      new Result({ output: 'ok', traceId: 'run-1', steps: [new Step('a', 'llm', call)] }),
+      tracer,
+    );
+    expect(tracer.spans[1].attrs['cendor.replayed']).toBe(true);
+  });
+});

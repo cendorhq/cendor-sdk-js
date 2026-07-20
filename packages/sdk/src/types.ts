@@ -56,6 +56,7 @@ export interface ResultInit {
   output: unknown;
   steps?: Step[];
   traceId?: string;
+  conversationId?: string;
   agents?: string[];
   messages?: Message[];
   incomplete?: boolean;
@@ -67,6 +68,9 @@ export class Result {
   output: unknown;
   steps: Step[];
   traceId: string;
+  /** The conversation/session id this run belongs to, when run with a keyed session (G19).
+   * `spanTree` stamps it as `gen_ai.conversation.id`. Empty when there was no keyed session. */
+  conversationId: string;
   agents: string[];
   messages: Message[];
   incomplete: boolean;
@@ -83,6 +87,7 @@ export class Result {
     this.output = init.output;
     this.steps = init.steps ?? [];
     this.traceId = init.traceId ?? '';
+    this.conversationId = init.conversationId ?? '';
     this.agents = init.agents ?? [];
     this.messages = init.messages ?? [];
     this.incomplete = init.incomplete ?? false;

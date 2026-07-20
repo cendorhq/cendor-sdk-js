@@ -13,7 +13,7 @@ import type { Guardrail } from '@cendor/guardrails';
 import type { Agent } from './agent.js';
 import { type Checkpointer, asCheckpointer } from './checkpoint.js';
 import * as gate from './gate.js';
-import { withScope } from './governance.js';
+import { withConversation, withScope } from './governance.js';
 import { type Provider, assistantMessage, toolResultMessage } from './providers.js';
 import { formatContext } from './rag.js';
 import { type RetryPolicy, callWithRetry } from './resilience.js';
@@ -66,6 +66,8 @@ export interface RunOptions {
 export interface SessionLike {
   snapshot(): Message[];
   replace(messages: Message[]): void | Promise<void>;
+  /** Optional conversation id, propagated as `gen_ai.conversation.id` on the run span (G19). */
+  id?: string | null;
 }
 
 const EMPTY_TARGETS: ReadonlyMap<string, string> = new Map();
@@ -636,6 +638,7 @@ export class Runner {
         output: parseOutput((saved.output ?? null) as string | null, agent.outputType),
         steps: [],
         traceId: saved.run_id ?? '',
+        conversationId: this.opts.session?.id ?? '',
         agents: [agent.name],
         messages: [...(saved.messages ?? [])],
         incomplete: saved.output == null,
@@ -665,21 +668,24 @@ export class Runner {
       return await gate.collecting(async () => {
         // Per-agent scope (attribution + `maxUsd` cap) wraps the single-agent path too, mirroring the
         // orchestrator's `runOneAgent` — previously `maxUsd` was silently dropped here.
-        const res = await withScope(agent, () =>
-          trace(runId, () =>
-            withAuditDecision(this.opts.audit, input, agent.name, agent.model, runId, () =>
-              agentLoop(agent, messages, {
-                provider,
-                create,
-                maxTurns,
-                retry: this.opts.retry ?? null,
-                toolset: agent.tools,
-                resolve: (n) => agent.getTool(n),
-                transferTargets: EMPTY_TARGETS,
-                onTurn,
-                guardrails: gate.effective(agent, this.opts.guardrails),
-                guardrailMode,
-              }),
+        // withConversation (G19) propagates the session key so liveSpans can group multi-turn runs.
+        const res = await withConversation(this.opts.session, () =>
+          withScope(agent, () =>
+            trace(runId, () =>
+              withAuditDecision(this.opts.audit, input, agent.name, agent.model, runId, () =>
+                agentLoop(agent, messages, {
+                  provider,
+                  create,
+                  maxTurns,
+                  retry: this.opts.retry ?? null,
+                  toolset: agent.tools,
+                  resolve: (n) => agent.getTool(n),
+                  transferTargets: EMPTY_TARGETS,
+                  onTurn,
+                  guardrails: gate.effective(agent, this.opts.guardrails),
+                  guardrailMode,
+                }),
+              ),
             ),
           ),
         );
@@ -689,6 +695,7 @@ export class Runner {
           output: parseOutput(res.output, agent.outputType),
           steps,
           traceId: runId,
+          conversationId: this.opts.session?.id ?? '',
           agents: [agent.name],
           messages,
           incomplete: res.output === null,
