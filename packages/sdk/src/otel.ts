@@ -14,11 +14,13 @@ interface Span {
   setAttribute(key: string, value: unknown): void;
   end(): void;
 }
+/** `context`/`startTime` are optional; a fake tracer may ignore them (the real OTel one nests). */
 interface Tracer {
-  startSpan(name: string): Span;
+  startSpan(name: string, options?: { startTime?: number }, context?: unknown): Span;
 }
 interface OtelApi {
-  trace: { getTracer(name: string): Tracer };
+  trace: { getTracer(name: string): Tracer; setSpan(context: unknown, span: Span): unknown };
+  context: { active(): unknown };
 }
 
 function otelApi(): OtelApi | null {
@@ -29,10 +31,18 @@ function otelApi(): OtelApi | null {
   }
 }
 
-function tracerOf(tracer?: Tracer | null): Tracer | null {
-  if (tracer) return tracer;
+/** Resolve the tracer + (when using the real global API) the context helpers needed to NEST child
+ * spans under the run root. An injected tracer skips nesting (fakes don't model context; the real
+ * API does). */
+function resolve(tracer?: Tracer | null): { tr: Tracer; api: OtelApi | null } | null {
+  if (tracer) return { tr: tracer, api: null };
   const api = otelApi();
-  return api ? api.trace.getTracer('cendor.sdk') : null;
+  return api ? { tr: api.trace.getTracer('cendor.sdk'), api } : null;
+}
+
+/** A context that parents children under `root` (real API only; `undefined` with an injected fake). */
+function childContext(api: OtelApi | null, root: Span): unknown {
+  return api ? api.trace.setSpan(api.context.active(), root) : undefined;
 }
 
 function stepAttrs(span: Span, step: Step, stepNo: number): void {
@@ -71,18 +81,22 @@ export function spanTree(
   tracer?: Tracer | null,
   opts: { conversationId?: string; label?: string } = {},
 ): boolean {
-  const tr = tracerOf(tracer);
-  if (!tr) return false;
+  const r = resolve(tracer);
+  if (!r) return false;
+  const { tr, api } = r;
   const root = tr.startSpan('agent.run');
   root.setAttribute('cendor.run.id', result.traceId);
   root.setAttribute('cendor.trace_id', result.traceId);
   if (opts.conversationId) root.setAttribute('gen_ai.conversation.id', opts.conversationId);
   if (opts.label) root.setAttribute('cendor.run.label', opts.label);
+  const ctx = childContext(api, root); // nest call spans UNDER the run root (one trace)
   let stepNo = 0;
   for (const step of result.steps) {
     stepNo += 1;
     const span = tr.startSpan(
       step.call instanceof LLMCall ? `chat ${step.name}` : `execute_tool ${step.name}`,
+      undefined,
+      ctx,
     );
     span.setAttribute('cendor.trace_id', step.traceId);
     stepAttrs(span, step, stepNo);
@@ -113,11 +127,13 @@ export function spanTree(
 export function liveSpans(
   opts: { tracer?: Tracer | null; name?: string; conversationId?: string; label?: string } = {},
 ): { close(): void } {
-  const tr = tracerOf(opts.tracer);
-  if (!tr) return { close() {} };
+  const r = resolve(opts.tracer);
+  if (!r) return { close() {} };
+  const { tr, api } = r;
   const root = tr.startSpan(opts.name ?? 'agent.run');
   if (opts.conversationId) root.setAttribute('gen_ai.conversation.id', opts.conversationId);
   if (opts.label) root.setAttribute('cendor.run.label', opts.label);
+  const ctx = childContext(api, root); // nest each live child UNDER the run root (one trace)
   let stepNo = 0;
   let totalInput = 0;
   let totalOutput = 0;
@@ -134,9 +150,13 @@ export function liveSpans(
       runIdSet = true;
     }
     stepNo += 1;
-    const agent = currentAgent();
+    // Agent name: the ambient current agent, falling back to the event's stamped metadata.
+    const meta = (event as { metadata?: Record<string, unknown> }).metadata;
+    const agent = currentAgent() || (typeof meta?.agent === 'string' ? meta.agent : '');
     const span = tr.startSpan(
       event instanceof LLMCall ? `chat ${event.model}` : `execute_tool ${event.name}`,
+      undefined,
+      ctx,
     );
     span.setAttribute('cendor.trace_id', traceId);
     span.setAttribute('cendor.step', stepNo);
