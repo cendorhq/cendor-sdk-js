@@ -223,3 +223,82 @@ describe('V3 content + sessions on spanTree/liveSpans', () => {
     expect(tracer.spans[1].attrs['cendor.replayed']).toBe(true);
   });
 });
+
+// ---------------------------------------------- V5: emission truth (G-V4-1 TTFT, G-V4-2 agents, G-V4-3 estimated)
+
+describe('emission truth on spanTree (G-V4-1/2/3)', () => {
+  it('stamps ttft + usage_estimated on the chat span and rollups + agents on the root', () => {
+    const tracer = new FakeTracer();
+    const call = new LLMCall({
+      id: '1',
+      provider: 'openai',
+      model: 'gpt-4o',
+      messages: [{ role: 'user', content: 'x' }],
+      usage: new Usage({ inputTokens: 100, outputTokens: 40 }),
+      cost: new Money('0.0025'),
+      traceId: 'run-1',
+    });
+    call.metadata.ttft_ms = 12.5; // recovered on the first streamed chunk
+    call.metadata.usage_estimated = true; // stream reported no usage → offline estimate
+    const result = new Result({
+      output: 'ok',
+      traceId: 'run-1',
+      agents: ['assistant'],
+      steps: [new Step('assistant', 'llm', call)],
+    });
+    expect(spanTree(result, tracer)).toBe(true);
+    const chat = tracer.spans[1];
+    expect(chat.attrs['cendor.ttft_ms']).toBe(12.5); // G-V4-1
+    expect(chat.attrs['cendor.usage_estimated']).toBe('true'); // G-V4-3 (string, only when set)
+    // parity with the Python span_tree: run rollups + agents on the agent.run root (monitor reads these)
+    expect(tracer.root().attrs['cendor.run.agents']).toBe('assistant'); // G-V4-2 parity
+    expect(tracer.root().attrs['gen_ai.usage.input_tokens']).toBe(100);
+    expect(tracer.root().attrs['gen_ai.usage.output_tokens']).toBe(40);
+    expect(tracer.root().attrs['cendor.run.cost_usd']).toBe('0.0025');
+  });
+
+  it('omits usage_estimated + ttft on a non-streamed call (nothing invented)', () => {
+    const tracer = new FakeTracer();
+    const call = new LLMCall({
+      id: '1',
+      provider: 'openai',
+      model: 'gpt-4o',
+      messages: [{ role: 'user', content: 'x' }],
+      traceId: 'run-1',
+    });
+    spanTree(
+      new Result({ output: 'ok', traceId: 'run-1', steps: [new Step('a', 'llm', call)] }),
+      tracer,
+    );
+    expect('cendor.usage_estimated' in tracer.spans[1].attrs).toBe(false);
+    expect('cendor.ttft_ms' in tracer.spans[1].attrs).toBe(false);
+  });
+});
+
+describe('emission truth on liveSpans (G-V4-1/2/3)', () => {
+  beforeEach(() => bus._reset());
+  afterEach(() => bus._reset());
+
+  it('stamps ttft + usage_estimated on the chat span and agents on the root', () => {
+    const tracer = new FakeTracer();
+    const scope = liveSpans({ tracer });
+    const call = new LLMCall({
+      id: '1',
+      provider: 'openai',
+      model: 'gpt-4o',
+      messages: [{ role: 'user', content: 'x' }],
+      usage: new Usage({ inputTokens: 100, outputTokens: 40 }),
+      cost: new Money('0.0025'),
+      traceId: 'run-9',
+    });
+    call.metadata.ttft_ms = 9.75;
+    call.metadata.usage_estimated = true;
+    call.metadata.agent = 'assistant'; // liveSpans reads currentAgent() || metadata.agent
+    bus.emit(call);
+    scope.close();
+    const chat = tracer.spans[1];
+    expect(chat.attrs['cendor.ttft_ms']).toBe(9.75); // G-V4-1
+    expect(chat.attrs['cendor.usage_estimated']).toBe('true'); // G-V4-3
+    expect(tracer.root().attrs['cendor.run.agents']).toBe('assistant'); // G-V4-2
+  });
+});

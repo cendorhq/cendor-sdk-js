@@ -118,10 +118,17 @@ export function spanTree(
   // arg wins). semconv: only a real key is used, never a synthesized one.
   const conversationId = opts.conversationId || result.conversationId || undefined;
   const root = tr.startSpan('agent.run');
+  root.setAttribute('gen_ai.operation.name', 'agent');
   root.setAttribute('cendor.run.id', result.traceId);
   root.setAttribute('cendor.trace_id', result.traceId);
   if (conversationId) root.setAttribute('gen_ai.conversation.id', conversationId);
   if (opts.label) root.setAttribute('cendor.run.label', opts.label);
+  // Run-level rollups on the root — parity with the Python span_tree (a monitor reads run tokens /
+  // cost / agents off the agent.run root). G-V4-2: agents on the root fills the runs-list column.
+  root.setAttribute('cendor.run.agents', result.agents.join(','));
+  root.setAttribute('gen_ai.usage.input_tokens', result.usage.inputTokens);
+  root.setAttribute('gen_ai.usage.output_tokens', result.usage.outputTokens);
+  root.setAttribute('cendor.run.cost_usd', result.cost.amount.toString());
   const ctx = childContext(api, root); // nest call spans UNDER the run root (one trace)
   let stepNo = 0;
   for (const step of result.steps) {
@@ -134,6 +141,9 @@ export function spanTree(
     span.setAttribute('cendor.trace_id', step.traceId);
     stepAttrs(span, step, stepNo);
     if (step.call instanceof LLMCall) {
+      const ttft = step.call.metadata?.ttft_ms; // G-V4-1: TTFT inside a governed journey
+      if (ttft != null) span.setAttribute('cendor.ttft_ms', ttft as number);
+      if (step.call.metadata?.usage_estimated) span.setAttribute('cendor.usage_estimated', 'true'); // G-V4-3
       if (step.call.metadata.replayed) span.setAttribute('cendor.replayed', true); // G22
       for (const [k, v] of Object.entries(callContentAttrs(step.call))) span.setAttribute(k, v);
     } else if (step.call instanceof ToolCall) {
@@ -180,6 +190,7 @@ export function liveSpans(
   let totalCost = Money.zero();
   let runIdSet = false;
   let convSet = Boolean(opts.conversationId);
+  const agentsSeen = new Set<string>(); // ordered-unique agents → cendor.run.agents (G-V4-2)
   const sub = (event: unknown): void => {
     if (!(event instanceof LLMCall || event instanceof ToolCall)) return;
     const traceId = event.traceId ?? '';
@@ -203,6 +214,7 @@ export function liveSpans(
     // Agent name: the ambient current agent, falling back to the event's stamped metadata.
     const meta = (event as { metadata?: Record<string, unknown> }).metadata;
     const agent = currentAgent() || (typeof meta?.agent === 'string' ? meta.agent : '');
+    if (agent) agentsSeen.add(agent); // G-V4-2: collect participants for the root
     const span = tr.startSpan(
       event instanceof LLMCall ? `chat ${event.model}` : `execute_tool ${event.name}`,
       undefined,
@@ -224,6 +236,9 @@ export function liveSpans(
         span.setAttribute('gen_ai.usage.cost', event.cost.toString());
         totalCost = totalCost.add(event.cost);
       }
+      const ttft = event.metadata?.ttft_ms; // G-V4-1: TTFT inside a live governed journey
+      if (ttft != null) span.setAttribute('cendor.ttft_ms', ttft as number);
+      if (event.metadata?.usage_estimated) span.setAttribute('cendor.usage_estimated', 'true'); // G-V4-3
       if (event.metadata.replayed) span.setAttribute('cendor.replayed', true); // G22
       for (const [k, v] of Object.entries(callContentAttrs(event))) span.setAttribute(k, v);
     } else {
@@ -242,6 +257,8 @@ export function liveSpans(
       root.setAttribute('gen_ai.usage.input_tokens', totalInput);
       root.setAttribute('gen_ai.usage.output_tokens', totalOutput);
       root.setAttribute('cendor.run.cost_usd', totalCost.amount.toString());
+      // G-V4-2: agents on the root fill the runs-list Agents column for live-streamed runs.
+      root.setAttribute('cendor.run.agents', [...agentsSeen].join(','));
       root.end();
     },
   };
