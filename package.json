@@ -23,10 +23,10 @@
     "release": "pnpm build && changeset publish"
   },
   "devDependencies": {
-    "@anthropic-ai/sdk": "^0.112.3",
+    "@anthropic-ai/sdk": "^0.112.4",
     "@biomejs/biome": "1.9.4",
     "@changesets/cli": "^2.31.1",
-    "@google/genai": "^2.12.0",
+    "@google/genai": "^2.13.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.20.1",
     "better-sqlite3": "^12.11.1",
