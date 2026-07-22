@@ -20,7 +20,7 @@ interface Tracer {
 }
 interface OtelApi {
   trace: { getTracer(name: string): Tracer; setSpan(context: unknown, span: Span): unknown };
-  context: { active(): unknown };
+  context: { active(): unknown; with<T>(context: unknown, fn: () => T): T };
 }
 
 function otelApi(): OtelApi | null {
@@ -43,6 +43,30 @@ function resolve(tracer?: Tracer | null): { tr: Tracer; api: OtelApi | null } | 
 /** A context that parents children under `root` (real API only; `undefined` with an injected fake). */
 function childContext(api: OtelApi | null, root: Span): unknown {
   return api ? api.trace.setSpan(api.context.active(), root) : undefined;
+}
+
+/**
+ * Open `liveSpans` scopes (innermost last), each holding the real OTel API + the run root's child
+ * context. The runner uses the innermost to install the run root as the ACTIVE context span for the
+ * run body — see {@link withLiveRootActive}.
+ */
+const liveScopes: Array<{ api: OtelApi; ctx: unknown }> = [];
+
+/**
+ * Run `fn` with the innermost open `liveSpans` root installed as the **active context span** (parity
+ * with Python's `start_as_current_span`), so audit entries emitted during the run carry the run's
+ * trace id (`@cendor/acttrace` correlation) and `audit.*` mirror spans nest under the run trace.
+ *
+ * A **no-op that just runs `fn`** when no `liveSpans` scope is open, or when `@opentelemetry/api` /
+ * its context manager is absent (`liveSpans` registers a scope only when the real API resolved). It
+ * composes with a caller's own active span (the scope's context was captured from `context.active()`
+ * when `liveSpans` opened) rather than replacing it, and the activation is confined to `fn`.
+ *
+ * @internal called by the runner/orchestration around each run body.
+ */
+export function withLiveRootActive<T>(fn: () => T): T {
+  const top = liveScopes[liveScopes.length - 1];
+  return top ? top.api.context.with(top.ctx, fn) : fn();
 }
 
 /** Best-effort system prompt from a call's request kwargs — for providers where the system prompt
@@ -184,6 +208,10 @@ export function liveSpans(
   if (opts.conversationId) root.setAttribute('gen_ai.conversation.id', opts.conversationId);
   if (opts.label) root.setAttribute('cendor.run.label', opts.label);
   const ctx = childContext(api, root); // nest each live child UNDER the run root (one trace)
+  // Register this scope so the runner can make `root` the active context span for the run body
+  // (real API only; an injected fake tracer models no context, so it never activates — unchanged).
+  const scope = api ? { api, ctx } : null;
+  if (scope) liveScopes.push(scope);
   let stepNo = 0;
   let totalInput = 0;
   let totalOutput = 0;
@@ -252,6 +280,11 @@ export function liveSpans(
   return {
     close() {
       bus.unsubscribe(sub);
+      if (scope) {
+        // Remove THIS scope by identity (safe under nesting / out-of-order close).
+        const i = liveScopes.indexOf(scope);
+        if (i >= 0) liveScopes.splice(i, 1);
+      }
       coreOtel.exitLiveSpans();
       // Usage/cost rollups on the root at close — parity with spanTree's finished totals.
       root.setAttribute('gen_ai.usage.input_tokens', totalInput);

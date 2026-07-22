@@ -14,6 +14,7 @@ import type { Agent } from './agent.js';
 import { type Checkpointer, asCheckpointer } from './checkpoint.js';
 import * as gate from './gate.js';
 import { withConversation, withScope } from './governance.js';
+import { withLiveRootActive } from './otel.js';
 import { type Provider, assistantMessage, toolResultMessage } from './providers.js';
 import { formatContext } from './rag.js';
 import { type RetryPolicy, callWithRetry } from './resilience.js';
@@ -665,43 +666,49 @@ export class Runner {
     bus.subscribe(sub);
     try {
       // `collecting` gathers this run's guardrail decisions for `Result.guardrailDecisions`.
-      return await gate.collecting(async () => {
-        // Per-agent scope (attribution + `maxUsd` cap) wraps the single-agent path too, mirroring the
-        // orchestrator's `runOneAgent` — previously `maxUsd` was silently dropped here.
-        // withConversation (G19) propagates the session key so liveSpans can group multi-turn runs.
-        const res = await withConversation(this.opts.session, () =>
-          withScope(agent, () =>
-            trace(runId, () =>
-              withAuditDecision(this.opts.audit, input, agent.name, agent.model, runId, () =>
-                agentLoop(agent, messages, {
-                  provider,
-                  create,
-                  maxTurns,
-                  retry: this.opts.retry ?? null,
-                  toolset: agent.tools,
-                  resolve: (n) => agent.getTool(n),
-                  transferTargets: EMPTY_TARGETS,
-                  onTurn,
-                  guardrails: gate.effective(agent, this.opts.guardrails),
-                  guardrailMode,
-                }),
+      // withLiveRootActive makes the caller's liveSpans run root (if any) the ACTIVE context span
+      // for the whole run body, so audit entries correlate to the run (cendor.audit.otel_trace_id)
+      // and audit.* mirror spans join the run's trace. No-op without a liveSpans scope / OTel —
+      // parity with Python `live_spans`.
+      return await withLiveRootActive(() =>
+        gate.collecting(async () => {
+          // Per-agent scope (attribution + `maxUsd` cap) wraps the single-agent path too, mirroring
+          // the orchestrator's `runOneAgent` — previously `maxUsd` was silently dropped here.
+          // withConversation (G19) propagates the session key so liveSpans groups multi-turn runs.
+          const res = await withConversation(this.opts.session, () =>
+            withScope(agent, () =>
+              trace(runId, () =>
+                withAuditDecision(this.opts.audit, input, agent.name, agent.model, runId, () =>
+                  agentLoop(agent, messages, {
+                    provider,
+                    create,
+                    maxTurns,
+                    retry: this.opts.retry ?? null,
+                    toolset: agent.tools,
+                    resolve: (n) => agent.getTool(n),
+                    transferTargets: EMPTY_TARGETS,
+                    onTurn,
+                    guardrails: gate.effective(agent, this.opts.guardrails),
+                    guardrailMode,
+                  }),
+                ),
               ),
             ),
-          ),
-        );
-        await this.opts.session?.replace(messages);
-        ckpt?.save({ run_id: runId, messages, done: true, output: res.output });
-        return new Result({
-          output: parseOutput(res.output, agent.outputType),
-          steps,
-          traceId: runId,
-          conversationId: this.opts.session?.id ?? '',
-          agents: [agent.name],
-          messages,
-          incomplete: res.output === null,
-          guardrailDecisions: gate.snapshot(),
-        });
-      });
+          );
+          await this.opts.session?.replace(messages);
+          ckpt?.save({ run_id: runId, messages, done: true, output: res.output });
+          return new Result({
+            output: parseOutput(res.output, agent.outputType),
+            steps,
+            traceId: runId,
+            conversationId: this.opts.session?.id ?? '',
+            agents: [agent.name],
+            messages,
+            incomplete: res.output === null,
+            guardrailDecisions: gate.snapshot(),
+          });
+        }),
+      );
     } finally {
       bus.unsubscribe(sub);
     }
@@ -771,39 +778,44 @@ export async function* streamOne(
   const produce = async (): Promise<void> => {
     try {
       // `collecting` gathers this run's guardrail decisions for `Result.guardrailDecisions`.
-      const result = await gate.collecting(async () => {
-        // Per-agent scope (attribution + `maxUsd` cap) wraps the single-agent stream path too.
-        const res = await withScope(agent, () =>
-          trace(runId, () =>
-            withAuditDecision(opts.audit, input, agent.name, agent.model, runId, () =>
-              streamSegment(
-                agent,
-                messages,
-                {
-                  provider,
-                  create,
-                  maxTurns,
-                  toolset: agent.tools,
-                  resolve: (n) => agent.getTool(n),
-                  transferTargets: EMPTY_TARGETS,
-                  guardrails: gate.effective(agent, opts.guardrails),
-                },
-                (ev) => queue.push(ev),
+      // withLiveRootActive activates the caller's liveSpans run root for the run body so audit
+      // entries correlate + audit.* spans join the run trace (no-op without a scope / OTel). The
+      // consumer `for await` loop below stays OUTSIDE — user code must not run under the run root.
+      const result = await withLiveRootActive(() =>
+        gate.collecting(async () => {
+          // Per-agent scope (attribution + `maxUsd` cap) wraps the single-agent stream path too.
+          const res = await withScope(agent, () =>
+            trace(runId, () =>
+              withAuditDecision(opts.audit, input, agent.name, agent.model, runId, () =>
+                streamSegment(
+                  agent,
+                  messages,
+                  {
+                    provider,
+                    create,
+                    maxTurns,
+                    toolset: agent.tools,
+                    resolve: (n) => agent.getTool(n),
+                    transferTargets: EMPTY_TARGETS,
+                    guardrails: gate.effective(agent, opts.guardrails),
+                  },
+                  (ev) => queue.push(ev),
+                ),
               ),
             ),
-          ),
-        );
-        await opts.session?.replace(messages);
-        return new Result({
-          output: parseOutput(res.output, agent.outputType),
-          steps,
-          traceId: runId,
-          agents: [agent.name],
-          messages,
-          incomplete: res.output === null,
-          guardrailDecisions: gate.snapshot(),
-        });
-      });
+          );
+          await opts.session?.replace(messages);
+          return new Result({
+            output: parseOutput(res.output, agent.outputType),
+            steps,
+            traceId: runId,
+            agents: [agent.name],
+            messages,
+            incomplete: res.output === null,
+            guardrailDecisions: gate.snapshot(),
+          });
+        }),
+      );
       queue.push(new RunComplete(result));
       queue.close();
     } catch (err) {
