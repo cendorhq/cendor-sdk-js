@@ -302,3 +302,70 @@ describe('emission truth on liveSpans (G-V4-1/2/3)', () => {
     expect(tracer.root().attrs['cendor.run.agents']).toBe('assistant'); // G-V4-2
   });
 });
+
+describe('liveSpans run-family filter + ambient agent/conversation (GLR-2/3)', () => {
+  beforeEach(() => bus._reset());
+  afterEach(() => bus._reset());
+
+  const call = (traceId: string, meta: Record<string, unknown> = {}): LLMCall => {
+    const c = new LLMCall({
+      id: traceId,
+      provider: 'openai',
+      model: 'gpt-4o',
+      messages: [{ role: 'user', content: 'x' }],
+      usage: new Usage({ inputTokens: 10, outputTokens: 5 }),
+      traceId,
+    });
+    Object.assign(c.metadata, meta);
+    return c;
+  };
+
+  it('renders only THIS run family, dropping a concurrent run (GLR-3)', () => {
+    const tracer = new FakeTracer();
+    const scope = liveSpans({ tracer });
+    bus.emit(call('run-A')); // first event → learns family 'run-A'
+    bus.emit(call('run-B')); // concurrent run → filtered out
+    bus.emit(call('run-A')); // same run → rendered
+    scope.close();
+    // spans[0] is the root; only the two run-A calls become child spans.
+    expect(tracer.spans.filter((s) => s.attrs['gen_ai.operation.name'] === 'chat')).toHaveLength(2);
+    expect(tracer.root().attrs['cendor.run.id']).toBe('run-A');
+  });
+
+  it('accepts orchestration segments of the same family, drops another family (GLR-3)', () => {
+    const tracer = new FakeTracer();
+    const scope = liveSpans({ tracer });
+    bus.emit(call('parent:agentA#0')); // learns family 'parent'
+    bus.emit(call('parent:agentB#1')); // same family → rendered
+    bus.emit(call('other:agentC#0')); // different family → dropped
+    scope.close();
+    expect(tracer.spans.filter((s) => s.attrs['gen_ai.operation.name'] === 'chat')).toHaveLength(2);
+    expect(tracer.root().attrs['cendor.run.id']).toBe('parent'); // normalized to the family root
+  });
+
+  it('stamps agent + conversation from event metadata when the scope has exited (GLR-2)', () => {
+    const tracer = new FakeTracer();
+    const scope = liveSpans({ tracer }); // no explicit conversationId; no active ALS scope
+    bus.emit(call('run-9', { agent: 'reviewer', conversation_id: 'chat-42' }));
+    scope.close();
+    const chat = tracer.spans[1];
+    expect(chat.attrs['gen_ai.agent.name']).toBe('reviewer');
+    expect(tracer.root().attrs['gen_ai.conversation.id']).toBe('chat-42');
+  });
+
+  it('stamps reasoning tokens on the child span (GLR-2 rider)', () => {
+    const tracer = new FakeTracer();
+    const scope = liveSpans({ tracer });
+    const c = new LLMCall({
+      id: '1',
+      provider: 'openai',
+      model: 'gpt-4o',
+      messages: [],
+      usage: new Usage({ inputTokens: 100, outputTokens: 40, reasoningTokens: 12 }),
+      traceId: 'run-9',
+    });
+    bus.emit(c);
+    scope.close();
+    expect(tracer.spans[1].attrs['gen_ai.usage.reasoning_tokens']).toBe(12);
+  });
+});

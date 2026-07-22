@@ -27,6 +27,7 @@ import {
   Step,
   type StreamEvent,
   TextDelta,
+  ThinkingDelta,
   ToolCallEvent,
   ToolResultEvent,
 } from './types.js';
@@ -464,6 +465,8 @@ export async function streamSegment(
       const chunks: unknown[] = [];
       for await (const chunk of stream) {
         chunks.push(chunk);
+        const thinking = provider.streamThinking(chunk); // GLR-12: reasoning, if the provider streams it
+        if (thinking) emit(new ThinkingDelta(thinking));
         const text = provider.streamText(chunk);
         if (text) emit(new TextDelta(text));
       }
@@ -653,8 +656,9 @@ export class Runner {
     const { provider, create } = providerAndCreate(agent);
     const maxTurns = this.opts.maxTurns ?? agent.maxTurns;
     const resume = saved && !saved.done ? [...(saved.messages ?? [])] : null;
-    const messages =
-      resume !== null ? resume : await prepareMessages(agent, input, this.opts.session);
+    // GLR-4: prepared inside the run scopes below (so a retriever's embed call is attributed) —
+    // captured here for session.replace / checkpoint / Result after the run body returns.
+    let messages: Message[] = [];
     const onTurn = ckpt
       ? (msgs: Message[]): void => ckpt.save({ run_id: runId, messages: msgs, done: false })
       : null;
@@ -678,19 +682,32 @@ export class Runner {
           const res = await withConversation(this.opts.session, () =>
             withScope(agent, () =>
               trace(runId, () =>
-                withAuditDecision(this.opts.audit, input, agent.name, agent.model, runId, () =>
-                  agentLoop(agent, messages, {
-                    provider,
-                    create,
-                    maxTurns,
-                    retry: this.opts.retry ?? null,
-                    toolset: agent.tools,
-                    resolve: (n) => agent.getTool(n),
-                    transferTargets: EMPTY_TARGETS,
-                    onTurn,
-                    guardrails: gate.effective(agent, this.opts.guardrails),
-                    guardrailMode,
-                  }),
+                withAuditDecision(
+                  this.opts.audit,
+                  input,
+                  agent.name,
+                  agent.model,
+                  runId,
+                  async () => {
+                    // GLR-4: prepareMessages runs INSIDE the run scopes, so a retriever's embed call
+                    // carries traceId=runId — collected as a step, agent-stamped, budgeted, chained.
+                    messages =
+                      resume !== null
+                        ? resume
+                        : await prepareMessages(agent, input, this.opts.session);
+                    return agentLoop(agent, messages, {
+                      provider,
+                      create,
+                      maxTurns,
+                      retry: this.opts.retry ?? null,
+                      toolset: agent.tools,
+                      resolve: (n) => agent.getTool(n),
+                      transferTargets: EMPTY_TARGETS,
+                      onTurn,
+                      guardrails: gate.effective(agent, this.opts.guardrails),
+                      guardrailMode,
+                    });
+                  },
                 ),
               ),
             ),
@@ -767,7 +784,8 @@ export async function* streamOne(
   const runId = uuidHex();
   const { provider, create } = providerAndCreate(agent);
   const maxTurns = opts.maxTurns ?? agent.maxTurns;
-  const messages = await prepareMessages(agent, input, opts.session);
+  // GLR-4: prepared inside the run scopes below; captured here for session.replace / Result.
+  let messages: Message[] = [];
   const { steps, sub } = makeCollector(
     (t) => t === runId,
     () => agent.name,
@@ -786,8 +804,11 @@ export async function* streamOne(
           // Per-agent scope (attribution + `maxUsd` cap) wraps the single-agent stream path too.
           const res = await withScope(agent, () =>
             trace(runId, () =>
-              withAuditDecision(opts.audit, input, agent.name, agent.model, runId, () =>
-                streamSegment(
+              withAuditDecision(opts.audit, input, agent.name, agent.model, runId, async () => {
+                // GLR-4: prepareMessages runs INSIDE the run scopes so a retriever's embed call is
+                // attributed to the run (traceId=runId), collected, budgeted, agent-stamped.
+                messages = await prepareMessages(agent, input, opts.session);
+                return streamSegment(
                   agent,
                   messages,
                   {
@@ -800,8 +821,8 @@ export async function* streamOne(
                     guardrails: gate.effective(agent, opts.guardrails),
                   },
                   (ev) => queue.push(ev),
-                ),
-              ),
+                );
+              }),
             ),
           );
           await opts.session?.replace(messages);

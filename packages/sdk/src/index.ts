@@ -18,6 +18,7 @@ export {
   Run,
   Step,
   TextDelta,
+  ThinkingDelta,
   ToolCallEvent,
   ToolResultEvent,
   RunComplete,

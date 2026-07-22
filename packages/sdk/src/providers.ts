@@ -264,6 +264,9 @@ export interface Provider {
   parse(response: unknown): ParsedResponse;
   applyCache(kwargs: Record<string, unknown>): Record<string, unknown>;
   streamText(chunk: unknown): string;
+  /** GLR-12: incremental reasoning/thinking text from a stream chunk, or `''` when the provider
+   * doesn't stream thinking. Kept separate from {@link Provider.streamText} (the visible answer). */
+  streamThinking(chunk: unknown): string;
   parseStream(chunks: unknown[]): ParsedResponse;
   client(opts: ClientOptions): unknown;
   createMethod(client: unknown): (kwargs: Record<string, unknown>) => Promise<unknown>;
@@ -309,6 +312,9 @@ abstract class BaseProvider implements Provider {
   }
   streamText(_chunk: unknown): string {
     return '';
+  }
+  streamThinking(_chunk: unknown): string {
+    return ''; // GLR-12: most providers don't stream thinking text — overridden where they do
   }
   parseStream(chunks: unknown[]): ParsedResponse {
     // Whole-response fallback: parse the single collected response.
@@ -440,6 +446,15 @@ export class OpenAIChatProvider extends BaseProvider {
     const choices = get(chunk, 'choices');
     if (!Array.isArray(choices)) return '';
     return choices.map((c) => (get(get(c, 'delta'), 'content') as string) ?? '').join('');
+  }
+
+  override streamThinking(chunk: unknown): string {
+    // GLR-12: OpenAI-compatible reasoning models (e.g. DeepSeek-R1 via the OpenAI SDK) stream
+    // reasoning text on `delta.reasoning_content` — the streaming analog of the field core reads
+    // from a whole response. Standard OpenAI chat completions carry none, so this stays ''.
+    const choices = get(chunk, 'choices');
+    if (!Array.isArray(choices)) return '';
+    return choices.map((c) => (get(get(c, 'delta'), 'reasoning_content') as string) ?? '').join('');
   }
 
   override parseStream(chunks: unknown[]): ParsedResponse {
@@ -1016,6 +1031,11 @@ export class OllamaProvider extends BaseProvider {
 
   override streamText(chunk: unknown): string {
     return String(get(get(chunk, 'message'), 'content') ?? '');
+  }
+
+  override streamThinking(chunk: unknown): string {
+    // GLR-12: Ollama `think` models stream reasoning on `message.thinking`.
+    return String(get(get(chunk, 'message'), 'thinking') ?? '');
   }
 
   override parseStream(chunks: unknown[]): ParsedResponse {

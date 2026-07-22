@@ -14,7 +14,7 @@
  * ```
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { Dec, prices } from '@cendor/core';
+import { Dec, addAmbientProvider, prices } from '@cendor/core';
 import {
   BudgetEvent,
   BudgetExceeded,
@@ -147,6 +147,20 @@ export function withConversation<T>(session: unknown, fn: () => Promise<T>): Pro
   const cid = (session as { id?: string | null } | undefined)?.id;
   return cid ? activeConversation.run(String(cid), fn) : fn();
 }
+
+// GLR-2: register the SDK's ambient provider once, so the active agent + conversation id are stamped
+// onto every LLMCall/ToolCall at construction (the caller's synchronous frame). liveSpans/live_spans
+// (and any subscriber) then read them from the event even when it is delivered outside the run scope
+// (a stream finalized after the scope exits, a context-losing layer). Non-empty keys only; core's
+// never-overwrite seam keeps any explicit value. Registered at module load (idempotent).
+addAmbientProvider((_event) => {
+  const out: Record<string, unknown> = {};
+  const agent = currentAgent();
+  if (agent) out.agent = agent;
+  const conversation = currentConversation();
+  if (conversation) out.conversation_id = conversation;
+  return Object.keys(out).length > 0 ? out : undefined;
+});
 
 async function withBudgetBlock<T>(
   agentName: string,

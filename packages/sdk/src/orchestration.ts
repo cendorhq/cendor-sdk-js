@@ -94,18 +94,17 @@ function agentFromTrace(parent: string): (traceId: string) => string {
  * Multi-agent resume PRESERVES the saved run_id (the parent trace id) and ignores the new input (PY
  * `_resume_state`). A DONE checkpoint is handled by the caller's short-circuit before this runs.
  */
-async function resumeState(
+function resumeState(
   state: CheckpointState | null,
   agents: Agent[],
-  input: string | Message | Message[],
-  session: RunOptions['session'],
-): Promise<{
+): {
   parent: string;
   messages: Message[];
   active: Agent;
   seen: string[];
   startSeg: number;
-}> {
+  prepared: boolean;
+} {
   const registry = new Map(agents.map((a) => [a.name, a]));
   if (state && !state.done) {
     return {
@@ -114,14 +113,18 @@ async function resumeState(
       active: registry.get(state.active ?? '') ?? agents[0]!,
       seen: [...(state.seen ?? [])],
       startSeg: state.seg ?? 0,
+      prepared: true, // a resumed conversation already carries its prepared messages
     };
   }
+  // GLR-4: a fresh run prepares inside the first segment's scope (so the entry agent's retriever
+  // embed is attributed to the run), not here — outside every scope.
   return {
     parent: uuidHex(),
-    messages: await prepareMessages(agents[0]!, input, session),
+    messages: [],
     active: agents[0]!,
     seen: [],
     startSeg: 0,
+    prepared: false,
   };
 }
 
@@ -152,11 +155,14 @@ export async function runAgents(
   }
   const {
     parent,
-    messages,
+    messages: initialMessages,
     active: startActive,
     seen,
     startSeg,
-  } = await resumeState(saved, agents, input, opts.session);
+    prepared: preparedInit,
+  } = resumeState(saved, agents);
+  let messages = initialMessages;
+  let prepared = preparedInit; // GLR-4: a fresh run prepares inside the first segment's scope
   const { steps, sub } = makeCollector(
     (t) => t.startsWith(`${parent}:`),
     agentFromTrace(parent),
@@ -193,8 +199,15 @@ export async function runAgents(
           const onTurn = ckpt ? (): void => save(false, segNo, a.name) : null;
           const { provider, create } = providerAndCreate(a);
           const res = await withScope(a, () =>
-            trace(child, () =>
-              withAuditDecision(opts.audit, messages, a.name, a.model, child, () =>
+            trace(child, async () => {
+              // GLR-4: prepare the entry agent's messages inside its scope (first segment only), so a
+              // retriever's embed call is attributed to the run (traceId=child) rather than firing
+              // outside every scope.
+              if (!prepared) {
+                messages = await prepareMessages(a, input, opts.session);
+                prepared = true;
+              }
+              return withAuditDecision(opts.audit, messages, a.name, a.model, child, () =>
                 agentLoop(a, messages, {
                   provider,
                   create,
@@ -206,8 +219,8 @@ export async function runAgents(
                   onTurn,
                   guardrails: gate.effective(a, opts.guardrails),
                 }),
-              ),
-            ),
+              );
+            }),
           );
           if (res.switchTo && registry.has(res.switchTo)) {
             active = registry.get(res.switchTo)!;
@@ -441,7 +454,9 @@ export async function* streamAgents(
   bus.subscribe(sub);
   const queue: EventQueue<StreamEvent> = createEventQueue<StreamEvent>();
   const seen: string[] = [];
-  const messages = await prepareMessages(agents[0]!, input, opts.session);
+  // GLR-4: prepared inside the first segment's scope (attributes the entry agent's retriever embed).
+  let messages: Message[] = [];
+  let prepared = false;
   let active: Agent = agents[0]!;
   let output: string | null = null;
   const maxSegments = 2 * registry.size + 2;
@@ -458,8 +473,14 @@ export async function* streamAgents(
             const a = active;
             const { provider, create } = providerAndCreate(a);
             const res = await withScope(a, () =>
-              trace(child, () =>
-                withAuditDecision(opts.audit, messages, a.name, a.model, child, () =>
+              trace(child, async () => {
+                // GLR-4: prepare inside the first segment's scope so the entry agent's retriever
+                // embed is attributed to the run rather than firing outside every scope.
+                if (!prepared) {
+                  messages = await prepareMessages(a, input, opts.session);
+                  prepared = true;
+                }
+                return withAuditDecision(opts.audit, messages, a.name, a.model, child, () =>
                   streamSegment(
                     a,
                     messages,
@@ -474,8 +495,8 @@ export async function* streamAgents(
                     },
                     (ev) => queue.push(ev),
                   ),
-                ),
-              ),
+                );
+              }),
             );
             if (res.switchTo && registry.has(res.switchTo)) {
               active = registry.get(res.switchTo)!;

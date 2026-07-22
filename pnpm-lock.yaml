@@ -53,26 +53,26 @@ importers:
   packages/sdk:
     dependencies:
       '@cendor/acttrace':
+        specifier: ^0.11.0
+        version: 0.11.0
+      '@cendor/cassette':
+        specifier: ^0.3.0
+        version: 0.3.0
+      '@cendor/contextkit':
+        specifier: ^2.0.3
+        version: 2.0.3(@cendor/squeeze@0.3.3)
+      '@cendor/core':
         specifier: ^0.10.0
         version: 0.10.0
-      '@cendor/cassette':
-        specifier: ^0.2.11
-        version: 0.2.11
-      '@cendor/contextkit':
-        specifier: ^2.0.2
-        version: 2.0.2(@cendor/squeeze@0.3.2)
-      '@cendor/core':
-        specifier: ^0.9.0
-        version: 0.9.0
       '@cendor/guardrails':
-        specifier: ^0.7.3
-        version: 0.7.3
+        specifier: ^0.7.4
+        version: 0.7.4
       '@cendor/squeeze':
-        specifier: ^0.3.2
-        version: 0.3.2
+        specifier: ^0.3.3
+        version: 0.3.3
       '@cendor/tokenguard':
-        specifier: ^0.4.3
-        version: 0.4.3
+        specifier: ^0.5.0
+        version: 0.5.0
       zod:
         specifier: ^4.0.0
         version: 4.4.3
@@ -149,8 +149,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@cendor/acttrace@0.10.0':
-    resolution: {integrity: sha512-uvLoK5V3auDYVM9NfH3/zZXu0MXH5sUTe4YkxEsVFnlfATdW4KhIJXybm5u6jaZ6zYvvW76pF5s7kZCWhz0IGQ==}
+  '@cendor/acttrace@0.11.0':
+    resolution: {integrity: sha512-5iUjfMwGXRI/jvkyFk0G+J12Nl2tkgv+2npavYfdo6+kuICFmWsAQAOMHyEJdiSmWrT34mgu2qKSYvJ7kArAwg==}
     engines: {node: '>=18'}
     hasBin: true
     peerDependencies:
@@ -159,21 +159,21 @@ packages:
       compromise:
         optional: true
 
-  '@cendor/cassette@0.2.11':
-    resolution: {integrity: sha512-pQjTTZiqK7Fv+EprhcOK1eEI32CR+PS+cfdEK71ouNEK1v9CvDkwr/zyu7s9Am0hKbgLfwQ9st+YEr/Aiy92EA==}
+  '@cendor/cassette@0.3.0':
+    resolution: {integrity: sha512-gi8k8jRyhMnQSJgBt78Hp3DVQaR76/KykGJKeFIl23nKII+3C3qApk/yca842LuU3FTPggF6WYSrYiFa47h1RA==}
     engines: {node: '>=18'}
 
-  '@cendor/contextkit@2.0.2':
-    resolution: {integrity: sha512-SKQteDQWtqZ5+Iuk0TlhRa+0bF5tObuYLACUIWrkYKN7ZKUZK4kWgjNYokwS3ulIgEwJ0caywFzENxtB6mG/Xw==}
+  '@cendor/contextkit@2.0.3':
+    resolution: {integrity: sha512-fIDGIpEgBmrYDchG01DxG+om+x+4OwjKR/49MPVdJiKQut8m6uQpCln67XR+zOIYLBVpkywxSBW++xIZRPTsPg==}
     engines: {node: '>=18'}
     peerDependencies:
-      '@cendor/squeeze': ^0.3.2
+      '@cendor/squeeze': ^0.3.3
     peerDependenciesMeta:
       '@cendor/squeeze':
         optional: true
 
-  '@cendor/core@0.9.0':
-    resolution: {integrity: sha512-GcQMevlSXpSSlXgrcX2VT1L+TnYJEb0buZw2uiX+A5a3XODVKmpimlTKXtXS79xZv9YFzCtrd7FgyKjjPZfFjQ==}
+  '@cendor/core@0.10.0':
+    resolution: {integrity: sha512-m3XKcrVgLFolmbBjj0xRvLbaYyr9/LkytbXseVpGzG6ClFLhVdDLRXT0wROSFQ5sZX2/rS6zlseS6zGwjVifzg==}
     engines: {node: '>=18'}
     peerDependencies:
       '@langchain/core': '>=0.3'
@@ -184,8 +184,8 @@ packages:
       '@opentelemetry/api':
         optional: true
 
-  '@cendor/guardrails@0.7.3':
-    resolution: {integrity: sha512-VKU86rCtQn+0Wm+evH6QaHCBZH646RnN2DhZS0O3rMXXp/lODqnrQmPIZRdG4mvB/uRRyZ2fVroxKmsfHFFU6Q==}
+  '@cendor/guardrails@0.7.4':
+    resolution: {integrity: sha512-tdnKECIK7WBiFpApvm+s0MjFzMxHgWbb26hHrcNqNFjDCvNP7EmPqA727V4cbROBb76xd4kHC51VXLOYTiDvnw==}
     engines: {node: '>=18'}
     peerDependencies:
       '@huggingface/transformers': '>=3'
@@ -193,12 +193,12 @@ packages:
       '@huggingface/transformers':
         optional: true
 
-  '@cendor/squeeze@0.3.2':
-    resolution: {integrity: sha512-811zkVSkJBF7V8TJ92CT7vclPlM3UWdFg98jeYyt/Fxd3Dq/NFwj3x5bBcSukSRSoZpvekVJuGQqXQUr6arnuA==}
+  '@cendor/squeeze@0.3.3':
+    resolution: {integrity: sha512-gxCyJL98EzGyYljLkkUFgo+2bMM5zTDyxHhEzmWK0BBWxjCIUMQMbsRYcIiKYyF2GZcIyrPe1ytdMPItMXYJhg==}
     engines: {node: '>=18'}
 
-  '@cendor/tokenguard@0.4.3':
-    resolution: {integrity: sha512-c2qK7EAR1M8yUcFbMlYiNtV7bekPU06UUCNZa0veCC/n9O/tQJkPEAFtLcHW+izNDOc3nJoeXdBE/eMfCYNBuw==}
+  '@cendor/tokenguard@0.5.0':
+    resolution: {integrity: sha512-InYDLR/ZkDeaFFeX6vBFsjdoNoXymfyqiKf8nYvmRm2wj0jd45MdApMlAAN5YqsB5wEbeP0S016vo4N9d9x5+Q==}
     engines: {node: '>=18'}
     peerDependencies:
       '@opentelemetry/api': '>=1'
@@ -1503,53 +1503,53 @@ snapshots:
   '@biomejs/cli-win32-x64@1.9.4':
     optional: true
 
-  '@cendor/acttrace@0.10.0':
+  '@cendor/acttrace@0.11.0':
     dependencies:
-      '@cendor/core': 0.9.0
+      '@cendor/core': 0.10.0
     transitivePeerDependencies:
       - '@langchain/core'
       - '@opentelemetry/api'
 
-  '@cendor/cassette@0.2.11':
+  '@cendor/cassette@0.3.0':
     dependencies:
-      '@cendor/core': 0.9.0
+      '@cendor/core': 0.10.0
     transitivePeerDependencies:
       - '@langchain/core'
       - '@opentelemetry/api'
 
-  '@cendor/contextkit@2.0.2(@cendor/squeeze@0.3.2)':
+  '@cendor/contextkit@2.0.3(@cendor/squeeze@0.3.3)':
     dependencies:
-      '@cendor/core': 0.9.0
+      '@cendor/core': 0.10.0
     optionalDependencies:
-      '@cendor/squeeze': 0.3.2
+      '@cendor/squeeze': 0.3.3
     transitivePeerDependencies:
       - '@langchain/core'
       - '@opentelemetry/api'
 
-  '@cendor/core@0.9.0':
+  '@cendor/core@0.10.0':
     dependencies:
       decimal.js: 10.6.0
       js-tiktoken: 1.0.21
 
-  '@cendor/guardrails@0.7.3':
+  '@cendor/guardrails@0.7.4':
     dependencies:
-      '@cendor/core': 0.9.0
+      '@cendor/core': 0.10.0
     transitivePeerDependencies:
       - '@langchain/core'
       - '@opentelemetry/api'
 
-  '@cendor/squeeze@0.3.2':
+  '@cendor/squeeze@0.3.3':
     dependencies:
-      '@cendor/core': 0.9.0
+      '@cendor/core': 0.10.0
     optionalDependencies:
       better-sqlite3: 12.11.1
     transitivePeerDependencies:
       - '@langchain/core'
       - '@opentelemetry/api'
 
-  '@cendor/tokenguard@0.4.3':
+  '@cendor/tokenguard@0.5.0':
     dependencies:
-      '@cendor/core': 0.9.0
+      '@cendor/core': 0.10.0
     optionalDependencies:
       better-sqlite3: 12.11.1
     transitivePeerDependencies:

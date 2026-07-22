@@ -108,6 +108,9 @@ function stepAttrs(span: Span, step: Step, stepNo: number): void {
     if (step.usage) {
       span.setAttribute('gen_ai.usage.input_tokens', step.usage.inputTokens);
       span.setAttribute('gen_ai.usage.output_tokens', step.usage.outputTokens);
+      if (step.usage.reasoningTokens) {
+        span.setAttribute('gen_ai.usage.reasoning_tokens', step.usage.reasoningTokens);
+      }
     }
     if (step.cost) span.setAttribute('gen_ai.usage.cost', step.cost.toString());
   } else if (step.call instanceof ToolCall) {
@@ -218,21 +221,28 @@ export function liveSpans(
   let totalCost = Money.zero();
   let runIdSet = false;
   let convSet = Boolean(opts.conversationId);
+  let family = ''; // the run-family root, learned from the first event (GLR-3)
   const agentsSeen = new Set<string>(); // ordered-unique agents → cendor.run.agents (G-V4-2)
   const sub = (event: unknown): void => {
     if (!(event instanceof LLMCall || event instanceof ToolCall)) return;
     const traceId = event.traceId ?? '';
     if (!runIdSet && traceId) {
-      // Learn the run/correlation id from the first observed event (the trace scope is entered
-      // inside run(), after this root span was created) — parity with spanTree's cendor.run.id.
-      root.setAttribute('cendor.run.id', traceId);
-      root.setAttribute('cendor.trace_id', traceId);
+      // Learn the run-family root from the first observed event: the segment before the first ':'
+      // (orchestration segments are `${parent}:${agent}#${seg}`; a single-agent run is the bare
+      // runId). Matches makeCollector.match + the monitor's run_id normalization.
+      family = traceId.includes(':') ? traceId.slice(0, traceId.indexOf(':')) : traceId;
+      root.setAttribute('cendor.run.id', family);
+      root.setAttribute('cendor.trace_id', family);
       runIdSet = true;
     }
+    // GLR-3: render only events from THIS run family — a concurrent run sharing the process bus must
+    // not pollute this run's steps / rollups / children (same test as makeCollector.match).
+    if (family && traceId !== family && !traceId.startsWith(`${family}:`)) return;
     if (!convSet) {
-      // G19: learn the conversation id the runner propagated from the session key (no explicit
-      // arg was passed). Only a real key is used, never synthesized.
-      const cid = currentConversation();
+      // G19: prefer the conversation id stamped on the event at construction (GLR-2 — survives an
+      // out-of-scope delivery), else the ambient scope. Only a real key is used, never synthesized.
+      const metaCid = (event as { metadata?: Record<string, unknown> }).metadata?.conversation_id;
+      const cid = (typeof metaCid === 'string' && metaCid) || currentConversation();
       if (cid) {
         root.setAttribute('gen_ai.conversation.id', cid);
         convSet = true;
@@ -257,6 +267,11 @@ export function liveSpans(
       if (event.usage) {
         span.setAttribute('gen_ai.usage.input_tokens', event.usage.inputTokens);
         span.setAttribute('gen_ai.usage.output_tokens', event.usage.outputTokens);
+        // GLR-2 rider: reasoning tokens on the child span — parity with Python live_spans + core's
+        // libs-only emitter (both stamp it); only when nonzero, matching those.
+        if (event.usage.reasoningTokens) {
+          span.setAttribute('gen_ai.usage.reasoning_tokens', event.usage.reasoningTokens);
+        }
         totalInput += event.usage.inputTokens;
         totalOutput += event.usage.outputTokens;
       }

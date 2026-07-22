@@ -131,6 +131,26 @@ export class TextDelta {
   readonly type = 'text_delta' as const;
   constructor(readonly text: string) {}
 }
+/**
+ * A streamed **thinking / reasoning** delta (GLR-12), yielded from `run.stream` only for providers
+ * that stream reasoning text as it is produced (Ollama `think` models; OpenAI-compatible endpoints
+ * that stream `reasoning_content`). Additive: providers that don't stream thinking emit none, and a
+ * consumer switching on `ev.type` that doesn't handle `'thinking_delta'` is unaffected. Thinking is
+ * kept separate from the visible answer (`TextDelta`) so a UI can render or hide it independently.
+ *
+ * @example
+ * ```ts
+ * import { run } from '@cendor/sdk';
+ * for await (const ev of run.stream(agent, 'solve it')) {
+ *   if (ev.type === 'thinking_delta') process.stderr.write(ev.text); // reasoning, shown separately
+ *   else if (ev.type === 'text_delta') process.stdout.write(ev.text); // the answer
+ * }
+ * ```
+ */
+export class ThinkingDelta {
+  readonly type = 'thinking_delta' as const;
+  constructor(readonly text: string) {}
+}
 export class ToolCallEvent {
   readonly type = 'tool_call' as const;
   readonly name: string;
@@ -153,4 +173,4 @@ export class RunComplete {
   readonly type = 'run_complete' as const;
   constructor(readonly result: Result) {}
 }
-export type StreamEvent = TextDelta | ToolCallEvent | ToolResultEvent | RunComplete;
+export type StreamEvent = TextDelta | ThinkingDelta | ToolCallEvent | ToolResultEvent | RunComplete;
