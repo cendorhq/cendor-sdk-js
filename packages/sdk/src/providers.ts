@@ -5,11 +5,11 @@
  * Face, Azure AI Foundry (Chat + Responses) and Foundry Local are all ported. Client construction for
  * the non-OpenAI/Anthropic backends is lazy (their SDK is `require`d only when a client is built).
  *
- * Usage/cost is captured by the installed `@cendor/core`'s `instrument()` → bus, not here. The
- * shipped `@cendor/core` detects openai / openai_responses / anthropic, so Azure (chat + responses)
- * and Foundry Local — which wrap the standard `openai` client — get full end-to-end usage now. Hugging
- * Face / Ollama / Gemini / Bedrock produce a correct `ParsedResponse` today, but their usage capture
- * depends on new `@cendor/core` detection that reaches this package at a coordinated release.
+ * Usage/cost is captured by the installed `@cendor/core`'s `instrument()` → bus, not here. Core
+ * detects openai / openai_responses / anthropic / huggingface / ollama / google-genai and captures
+ * end-to-end token/cost for all of them (DR-2, shipped in `@cendor/core` 0.3.0). The only residual
+ * TS-vs-Py asymmetry is first-class aws-sdk-v3 Bedrock: core can't duck-type `send(ConverseCommand)`,
+ * so this package's Bedrock provider wraps it in a synthetic `converse()` (below) for core to fire.
  */
 import { createRequire } from 'node:module';
 import { instrument } from '@cendor/core';
@@ -64,20 +64,47 @@ export function toolResultMessage(toolCallId: string, name: string, content: str
  */
 export function ollamaMessage(m: Message): Message {
   const tcs = m.tool_calls;
-  if (m.role !== 'assistant' || !Array.isArray(tcs)) return m;
-  return {
-    ...m,
-    tool_calls: tcs.map((tc) => {
-      const fn = get(tc, 'function');
-      return {
-        ...(tc as Record<string, unknown>),
-        function: {
-          name: (get(fn, 'name') as string) ?? '',
-          arguments: loadsArgs(get(fn, 'arguments')),
-        },
-      };
-    }),
-  };
+  if (m.role === 'assistant' && Array.isArray(tcs)) {
+    return {
+      ...m,
+      tool_calls: tcs.map((tc) => {
+        const fn = get(tc, 'function');
+        return {
+          ...(tc as Record<string, unknown>),
+          function: {
+            name: (get(fn, 'name') as string) ?? '',
+            arguments: loadsArgs(get(fn, 'arguments')),
+          },
+        };
+      }),
+    };
+  }
+  // S15: a multimodal user turn → Ollama's { content, images: [base64…] }. Remote http(s) image
+  // URLs are unsupported (no fetching) and dropped.
+  const content = (m as Record<string, unknown>).content;
+  if (Array.isArray(content)) {
+    const texts: string[] = [];
+    const images: string[] = [];
+    for (const p of content) {
+      const t = partText(p);
+      if (t !== null) {
+        texts.push(t);
+        continue;
+      }
+      const url = imageUrl(p);
+      if (url?.startsWith('data:')) {
+        const { data } = parseDataUrl(url);
+        if (data) images.push(data); // raw base64, no data: prefix
+      }
+    }
+    const mapped: Record<string, unknown> = {
+      ...(m as Record<string, unknown>),
+      content: texts.join(''),
+    };
+    if (images.length > 0) mapped.images = images;
+    return mapped as Message;
+  }
+  return m;
 }
 
 function loadsArgs(raw: unknown): Record<string, unknown> {
@@ -119,7 +146,8 @@ function jsonInstruction(schema: JsonSchema | null | undefined): string {
 // The canonical multimodal content shape is OpenAI's content-parts list:
 //   [{type:'text', text:'…'}, {type:'image_url', image_url:{url:'data:|https'}}]
 // OpenAI/Azure/Foundry-Local/HF pass it through unchanged; the translators below map it onto
-// Anthropic / Gemini blocks. (Bedrock keeps the text; image bytes are out of scope there for now.)
+// Anthropic / Gemini blocks, Bedrock Converse image blocks, and Ollama images[] (S15). Data-URL
+// images translate everywhere; remote http(s) image URLs are unsupported on Bedrock/Ollama.
 
 function partText(part: unknown): string | null {
   if (part && typeof part === 'object' && get(part, 'type') === 'text')
@@ -199,6 +227,64 @@ export function geminiParts(content: unknown): unknown[] {
     }
   }
   return parts.length > 0 ? parts : [{ text: '' }];
+}
+
+/** Canonical content → Bedrock Converse content blocks (text + image). S15: data-URL images become
+ * `{image:{format, source:{bytes}}}` (Converse takes raw bytes, not base64/URL); remote http(s) URLs
+ * are unsupported (no fetch) and dropped. */
+export function bedrockContent(content: unknown): unknown[] {
+  if (!Array.isArray(content)) return [{ text: stringify(content) }];
+  const blocks: unknown[] = [];
+  for (const p of content) {
+    const text = partText(p);
+    if (text !== null) {
+      blocks.push({ text });
+      continue;
+    }
+    const url = imageUrl(p);
+    if (url?.startsWith('data:')) {
+      const { mediaType, data } = parseDataUrl(url);
+      const format = mediaType.includes('/') ? mediaType.split('/')[1] : 'png';
+      let bytes: Uint8Array;
+      try {
+        bytes = Uint8Array.from(Buffer.from(data, 'base64'));
+      } catch {
+        continue;
+      }
+      blocks.push({ image: { format, source: { bytes } } });
+    }
+  }
+  return blocks.length > 0 ? blocks : [{ text: '' }];
+}
+
+/** Anthropic families with **native** structured output (`output_config.format` json_schema). Others
+ * degrade to the JSON-instruction nudge. Conservative allow-list — mirror of the Python helper. */
+const ANTHROPIC_STRUCTURED_OUTPUT = [
+  'fable-5',
+  'mythos-5',
+  'opus-4-8',
+  'sonnet-5',
+  'haiku-4-5',
+  'opus-4-5',
+  'opus-4-1',
+];
+
+function anthropicSupportsStructuredOutput(model: string): boolean {
+  const m = model.toLowerCase();
+  return ANTHROPIC_STRUCTURED_OUTPUT.some((tag) => m.includes(tag));
+}
+
+/** Best-effort normalization for Anthropic `output_config.format`: every object node must set
+ * `additionalProperties: false`. Returns a deep copy. */
+function normalizeJsonSchema(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map((i) => normalizeJsonSchema(i));
+  if (!schema || typeof schema !== 'object') return schema;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(schema as Record<string, unknown>)) {
+    out[k] = v && typeof v === 'object' ? normalizeJsonSchema(v) : v;
+  }
+  if (out.type === 'object' && !('additionalProperties' in out)) out.additionalProperties = false;
+  return out;
 }
 
 // --------------------------------------------------------------------------- provider inference
@@ -719,7 +805,7 @@ export function canonicalToBedrock(messages: Message[]): Message[] {
       }
       out.push({ role: 'assistant', content: blocks.length > 0 ? blocks : [{ text: '' }] });
     } else {
-      out.push({ role: 'user', content: [{ text: textOfContent(m.content) }] });
+      out.push({ role: 'user', content: bedrockContent(m.content) }); // S15: text + image blocks
     }
   }
   flush();
@@ -752,12 +838,22 @@ export class AnthropicProvider extends BaseProvider {
     opts: BuildKwargsOptions,
   ): Record<string, unknown> {
     let sys = instructions;
-    if (opts.jsonMode) sys = `${sys}${jsonInstruction(opts.outputSchema)}`.trim();
     const kwargs: Record<string, unknown> = {
       model,
       messages: canonicalToAnthropic(messages),
       max_tokens: opts.maxTokens ?? 1024,
     };
+    // S14: native structured output on supported models (output_config.format json_schema); older
+    // models degrade to the instruction nudge.
+    if (opts.jsonMode) {
+      if (opts.outputSchema && anthropicSupportsStructuredOutput(model)) {
+        kwargs.output_config = {
+          format: { type: 'json_schema', schema: normalizeJsonSchema(opts.outputSchema) },
+        };
+      } else {
+        sys = `${sys}${jsonInstruction(opts.outputSchema)}`.trim();
+      }
+    }
     if (sys) kwargs.system = sys;
     const formatted = this.formatTools(tools);
     if (formatted) kwargs.tools = formatted;
@@ -803,6 +899,78 @@ export class AnthropicProvider extends BaseProvider {
       finishReason: (get(response, 'stop_reason') as string) ?? null,
       raw: response,
     };
+  }
+
+  // --- streaming (S1/S2) ----------------------------------------------------------------------
+  override supportsStream = true;
+
+  override streamText(chunk: unknown): string {
+    if (get(chunk, 'type') === 'content_block_delta') {
+      const delta = get(chunk, 'delta');
+      if (get(delta, 'type') === 'text_delta') return (get(delta, 'text') as string) ?? '';
+    }
+    return '';
+  }
+
+  override streamThinking(chunk: unknown): string {
+    // S2: extended-thinking text arrives on content_block_delta events carrying a thinking_delta.
+    if (get(chunk, 'type') === 'content_block_delta') {
+      const delta = get(chunk, 'delta');
+      if (get(delta, 'type') === 'thinking_delta') return (get(delta, 'thinking') as string) ?? '';
+    }
+    return '';
+  }
+
+  override parseStream(chunks: unknown[]): ParsedResponse {
+    let content = '';
+    // index -> block; tool_use blocks capture id+name from content_block_start (sent whole) and
+    // accumulate input JSON from input_json_delta fragments. thinking blocks stream separately.
+    const byIndex = new Map<number, { kind: string; id: string; name: string; args: string }>();
+    let finishReason: string | null = null;
+    for (const chunk of chunks) {
+      const etype = get(chunk, 'type');
+      if (etype === 'content_block_start') {
+        const idx = (get(chunk, 'index') as number) ?? 0;
+        const block = get(chunk, 'content_block');
+        if (get(block, 'type') === 'tool_use') {
+          byIndex.set(idx, {
+            kind: 'tool_use',
+            id: (get(block, 'id') as string) ?? '',
+            name: (get(block, 'name') as string) ?? '',
+            args: '',
+          });
+        } else {
+          byIndex.set(idx, {
+            kind: (get(block, 'type') as string) ?? '',
+            id: '',
+            name: '',
+            args: '',
+          });
+        }
+      } else if (etype === 'content_block_delta') {
+        const idx = (get(chunk, 'index') as number) ?? 0;
+        const delta = get(chunk, 'delta');
+        const dtype = get(delta, 'type');
+        if (dtype === 'text_delta') content += (get(delta, 'text') as string) ?? '';
+        else if (dtype === 'input_json_delta') {
+          const acc = byIndex.get(idx) ?? { kind: 'tool_use', id: '', name: '', args: '' };
+          acc.args += (get(delta, 'partial_json') as string) ?? '';
+          byIndex.set(idx, acc);
+        }
+      } else if (etype === 'message_delta') {
+        const sr = get(get(chunk, 'delta'), 'stop_reason');
+        if (sr) finishReason = sr as string;
+      }
+    }
+    const toolCalls: ToolInvocation[] = [...byIndex.entries()]
+      .filter(([, acc]) => acc.kind === 'tool_use')
+      .sort((a, b) => a[0] - b[0])
+      .map(([i, acc]) => ({
+        id: acc.id || `call_${i}`,
+        name: acc.name,
+        arguments: loadsArgs(acc.args),
+      }));
+    return { content: content || null, toolCalls, finishReason, raw: chunks };
   }
 }
 
