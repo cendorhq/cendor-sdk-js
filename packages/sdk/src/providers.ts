@@ -141,6 +141,16 @@ function jsonInstruction(schema: JsonSchema | null | undefined): string {
     : '\n\nRespond with only a single JSON object.';
 }
 
+/**
+ * S14: the reserved name of the synthetic single-tool Bedrock is forced to call so its `input` *is*
+ * the structured output. Bedrock Converse has no native json-schema mode, so a forced `toolChoice`
+ * on a schema-shaped tool is the strongest lever — but it can't coexist with real tools
+ * (model-dependent; the Gemini precedent), so it is gated to tool-less agents and falls back to the
+ * JSON nudge otherwise. The provider's `parse` unwraps this tool's input back into `content` so the
+ * loop never tries to *execute* it. Mirror of the Python `_STRUCTURED_OUTPUT_TOOL`.
+ */
+const STRUCTURED_OUTPUT_TOOL = 'cendor_structured_output';
+
 // --------------------------------------------------------------------------- multimodal content
 //
 // The canonical multimodal content shape is OpenAI's content-parts list:
@@ -1094,11 +1104,32 @@ export class BedrockProvider extends BaseProvider {
   ): Record<string, unknown> {
     const wire = canonicalToBedrock(messages);
     let systemText = instructions;
-    if (opts.jsonMode) systemText = `${systemText}${jsonInstruction(opts.outputSchema)}`.trim();
+    let forcedTool: Record<string, unknown> | null = null;
+    if (opts.jsonMode && opts.outputSchema && tools.length === 0) {
+      // S14: no native json-schema mode on Converse — force a synthetic single-tool call whose
+      // `input` IS the answer (unwrapped in `parse`). Gated to tool-less agents: a forced
+      // `toolChoice` can't coexist with real tools (model-dependent; documented honest limit).
+      forcedTool = {
+        toolSpec: {
+          name: STRUCTURED_OUTPUT_TOOL,
+          description: 'Return the final answer as JSON matching the schema.',
+          inputSchema: { json: opts.outputSchema },
+        },
+      };
+    } else if (opts.jsonMode) {
+      systemText = `${systemText}${jsonInstruction(opts.outputSchema)}`.trim();
+    }
     const kwargs: Record<string, unknown> = { modelId: model, messages: wire };
     if (systemText) kwargs.system = [{ text: systemText }];
     const formatted = this.formatTools(tools);
-    if (formatted) kwargs.toolConfig = formatted;
+    if (forcedTool) {
+      kwargs.toolConfig = {
+        tools: [forcedTool],
+        toolChoice: { tool: { name: STRUCTURED_OUTPUT_TOOL } },
+      };
+    } else if (formatted) {
+      kwargs.toolConfig = formatted;
+    }
     const inference: Record<string, unknown> = {};
     if (opts.temperature != null) inference.temperature = opts.temperature;
     if (opts.maxTokens != null) inference.maxTokens = opts.maxTokens;
@@ -1117,9 +1148,16 @@ export class BedrockProvider extends BaseProvider {
         if (t) textParts.push(String(t));
         const tu = get(b, 'toolUse');
         if (tu) {
+          const name = (get(tu, 'name') as string) ?? '';
+          if (name === STRUCTURED_OUTPUT_TOOL) {
+            // S14: the forced structured-output tool — its input IS the final answer, not a tool to
+            // run. Serialize it as content so the loop returns it (parseOutput coerces it back).
+            textParts.push(JSON.stringify((get(tu, 'input') as Record<string, unknown>) ?? {}));
+            continue;
+          }
           toolCalls.push({
             id: (get(tu, 'toolUseId') as string) ?? `call_${toolCalls.length}`,
-            name: (get(tu, 'name') as string) ?? '',
+            name,
             arguments: (get(tu, 'input') as Record<string, unknown>) ?? {},
           });
         }

@@ -45,6 +45,20 @@ export interface AgentOptions {
    * Override per run with `run(agent, input, { guardrailMode })`.
    */
   guardrailMode?: GuardrailMode;
+  /**
+   * When an `output`-stage guardrail **blocks** the final answer, re-ask the model to revise it up
+   * to this many times instead of throwing (default `0` = off; a block throws immediately). Each
+   * re-ask is a full model call — seconds, and billed; its cost lands in tokenguard/acttrace like
+   * any other. Bounded by both this cap and `maxTurns`. **Non-streaming only** (S12; PY parity).
+   */
+  reaskOnOutputTrip?: number;
+  /**
+   * On `run.stream`, also evaluate the `output` guardrails on the **buffered** text every this-many
+   * characters (default `0` = off; only the final text is checked). A block then throws *earlier* in
+   * the stream — but deltas already yielded can't be unshown, so this narrows the window, it doesn't
+   * close it (redact mid-stream is not applied). Single-agent `run.stream` (S12; PY parity).
+   */
+  streamCheckWindow?: number;
   /** Per-agent USD spend cap (orchestrator-enforced). */
   maxUsd?: number | null;
   /**
@@ -102,6 +116,8 @@ export class Agent {
   readonly handoffs: HandoffTarget[];
   readonly guardrails: Guardrail[];
   readonly guardrailMode: GuardrailMode;
+  readonly reaskOnOutputTrip: number;
+  readonly streamCheckWindow: number;
   readonly maxUsd: number | null;
   readonly apiKey: string | null;
   readonly baseURL: string | null;
@@ -126,6 +142,8 @@ export class Agent {
     this.handoffs = opts.handoffs ?? [];
     this.guardrails = opts.guardrails ?? [];
     this.guardrailMode = opts.guardrailMode ?? 'blocking';
+    this.reaskOnOutputTrip = opts.reaskOnOutputTrip ?? 0;
+    this.streamCheckWindow = opts.streamCheckWindow ?? 0;
     this.maxUsd = opts.maxUsd ?? null;
     this.apiKey = opts.apiKey ?? null;
     this.baseURL = opts.baseURL ?? null;

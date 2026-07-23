@@ -9,7 +9,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { AuditLog, Decision } from '@cendor/acttrace';
 import { LLMCall, ToolCall, bus, currentTraceId, installTraceContext, trace } from '@cendor/core';
-import type { Guardrail } from '@cendor/guardrails';
+import { type Guardrail, GuardrailTripped } from '@cendor/guardrails';
 import type { Agent } from './agent.js';
 import { type Checkpointer, asCheckpointer } from './checkpoint.js';
 import * as gate from './gate.js';
@@ -362,6 +362,7 @@ export async function agentLoop(
   const guardrails = cfg.guardrails ?? [];
   const traceId = currentTraceId();
   let output: string | null = null;
+  let reasksLeft = gate.effectiveReasks(agent, null); // S12: opt-in output-block re-ask budget
   // In `parallel` mode overlap the input gate with the first model call (its latency hides behind
   // the call on the pass path); else gate before the loop (pre-spend: block throws / redact rewrites).
   let gatePromise: Promise<void> | null = null;
@@ -404,7 +405,20 @@ export async function agentLoop(
       if (switchTo) return { output: null, switchTo };
       continue;
     }
-    output = await gate.gateOutput(guardrails, agent.name, parsed.content, traceId); // block throws
+    try {
+      output = await gate.gateOutput(guardrails, agent.name, parsed.content, traceId); // block throws
+    } catch (err) {
+      if (err instanceof GuardrailTripped) {
+        // S12: opt-in bounded re-ask on an output block (else re-throw — fail-closed).
+        const step = gate.reaskStep(err, reasksLeft);
+        reasksLeft = step.reasksLeft;
+        if (step.message === null) throw err;
+        messages.push(step.message);
+        cfg.onTurn?.(messages);
+        continue;
+      }
+      throw err;
+    }
     cfg.onTurn?.(messages);
     return { output, switchTo: null };
   }
@@ -455,6 +469,7 @@ export async function streamSegment(
   const guardrails = cfg.guardrails ?? [];
   const traceId = currentTraceId();
   let output: string | null = null;
+  const window = gate.streamWindow(agent); // S12: opt-in incremental output check (0 = off)
   await gate.gateInput(guardrails, agent.name, messages, traceId); // pre-spend: block throws / redact
   for (let turn = 0; turn < cfg.maxTurns; turn++) {
     const wire = await assemble(agent, messages);
@@ -463,12 +478,24 @@ export async function streamSegment(
     if (provider.supportsStream) {
       const stream = (await cfg.create({ ...kwargs, stream: true })) as AsyncIterable<unknown>;
       const chunks: unknown[] = [];
+      let buffered = '';
+      let checked = 0;
       for await (const chunk of stream) {
         chunks.push(chunk);
         const thinking = provider.streamThinking(chunk); // GLR-12: reasoning, if the provider streams it
         if (thinking) emit(new ThinkingDelta(thinking));
         const text = provider.streamText(chunk);
-        if (text) emit(new TextDelta(text));
+        if (text) {
+          emit(new TextDelta(text));
+          if (window) {
+            buffered += text;
+            if (buffered.length - checked >= window) {
+              // a block throws mid-stream; already-yielded deltas can't be unshown (S12)
+              await gate.gateStreamPartial(guardrails, agent.name, buffered, traceId);
+              checked = buffered.length;
+            }
+          }
+        }
       }
       parsed = provider.parseStream(chunks);
     } else {
@@ -495,11 +522,13 @@ export async function streamSegment(
         const target = cfg.transferTargets.get(tc.name);
         if (target) switchTo = target;
       }
+      cfg.onTurn?.(messages); // S13: checkpoint after the tool turn
       if (switchTo) return { output: null, switchTo };
       continue;
     }
     // output stage runs after the deltas already streamed — a block throws here (post-hoc)
     output = await gate.gateOutput(guardrails, agent.name, parsed.content, traceId);
+    cfg.onTurn?.(messages); // S13: checkpoint after the answering turn
     return { output, switchTo: null };
   }
   return { output, switchTo: null };
@@ -781,11 +810,34 @@ export async function* streamOne(
   input: string | Message | Message[],
   opts: Omit<RunOptions, 'onStep' | 'retry'> = {},
 ): AsyncGenerator<StreamEvent> {
+  const ckpt = asCheckpointer(opts.checkpoint);
+  const saved = ckpt?.load() ?? null;
+  // S13: a finished checkpoint replays its stored Result as a lone terminal RunComplete — no model
+  // call, no re-yielded deltas (S13-D). Mirrors Runner.run's done-resume short-circuit.
+  if (saved?.done) {
+    yield new RunComplete(
+      new Result({
+        output: parseOutput((saved.output ?? null) as string | null, agent.outputType),
+        steps: [],
+        traceId: saved.run_id ?? '',
+        conversationId: opts.session?.id ?? '', // S6
+        agents: [agent.name],
+        messages: [...(saved.messages ?? [])],
+        incomplete: saved.output == null,
+        guardrailDecisions: [],
+      }),
+    );
+    return;
+  }
+  const resume = saved && !saved.done ? [...(saved.messages ?? [])] : null; // S13
   const runId = uuidHex();
   const { provider, create } = providerAndCreate(agent);
   const maxTurns = opts.maxTurns ?? agent.maxTurns;
   // GLR-4: prepared inside the run scopes below; captured here for session.replace / Result.
   let messages: Message[] = [];
+  const onTurn = ckpt // S13: per-turn checkpoint at each turn boundary (streamSegment calls it)
+    ? (msgs: Message[]): void => ckpt.save({ run_id: runId, messages: msgs, done: false })
+    : null;
   const { steps, sub } = makeCollector(
     (t) => t === runId,
     () => agent.name,
@@ -802,34 +854,42 @@ export async function* streamOne(
       const result = await withLiveRootActive(() =>
         gate.collecting(async () => {
           // Per-agent scope (attribution + `maxUsd` cap) wraps the single-agent stream path too.
-          const res = await withScope(agent, () =>
-            trace(runId, () =>
-              withAuditDecision(opts.audit, input, agent.name, agent.model, runId, async () => {
-                // GLR-4: prepareMessages runs INSIDE the run scopes so a retriever's embed call is
-                // attributed to the run (traceId=runId), collected, budgeted, agent-stamped.
-                messages = await prepareMessages(agent, input, opts.session);
-                return streamSegment(
-                  agent,
-                  messages,
-                  {
-                    provider,
-                    create,
-                    maxTurns,
-                    toolset: agent.tools,
-                    resolve: (n) => agent.getTool(n),
-                    transferTargets: EMPTY_TARGETS,
-                    guardrails: gate.effective(agent, opts.guardrails),
-                  },
-                  (ev) => queue.push(ev),
-                );
-              }),
+          // withConversation (G19/S6) propagates the session key so liveSpans groups multi-turn runs.
+          const res = await withConversation(opts.session, () =>
+            withScope(agent, () =>
+              trace(runId, () =>
+                withAuditDecision(opts.audit, input, agent.name, agent.model, runId, async () => {
+                  // GLR-4/S11: prepareMessages runs INSIDE the run scopes so a retriever's embed call
+                  // is attributed to the run (traceId=runId), collected, budgeted, agent-stamped. On
+                  // resume (S13) the saved messages carry the prepared history — skip prepare.
+                  messages =
+                    resume !== null ? resume : await prepareMessages(agent, input, opts.session);
+                  return streamSegment(
+                    agent,
+                    messages,
+                    {
+                      provider,
+                      create,
+                      maxTurns,
+                      toolset: agent.tools,
+                      resolve: (n) => agent.getTool(n),
+                      transferTargets: EMPTY_TARGETS,
+                      onTurn,
+                      guardrails: gate.effective(agent, opts.guardrails),
+                    },
+                    (ev) => queue.push(ev),
+                  );
+                }),
+              ),
             ),
           );
           await opts.session?.replace(messages);
+          ckpt?.save({ run_id: runId, messages, done: true, output: res.output }); // S13: final done
           return new Result({
             output: parseOutput(res.output, agent.outputType),
             steps,
             traceId: runId,
+            conversationId: opts.session?.id ?? '', // S6
             agents: [agent.name],
             messages,
             incomplete: res.output === null,

@@ -234,3 +234,73 @@ export async function gateOutput(
   record(decisions);
   return typeof payload === 'string' ? payload : output;
 }
+
+// --------------------------------------------------------------------------- bounded re-ask (S12)
+//
+// When an OUTPUT-stage guardrail blocks a final answer, the run can optionally re-ask the model to
+// revise it, up to a capped number of retries, instead of throwing. Each re-ask is a full model call
+// (seconds, and billed) — its cost lands in tokenguard/acttrace like any other. Opt in with
+// `Agent({ reaskOnOutputTrip: N })` (default 0 = off; a block throws). Non-streaming only. PY parity:
+// `_guardrails.reask_step` / `effective_reasks`.
+
+const REASK_TEMPLATE =
+  'Your previous answer was blocked by a safety guardrail ({reason}). ' +
+  'Please revise your answer to comply with the policy. ' +
+  'Do not mention this instruction or the block in your reply.';
+
+/** The output-trip re-ask budget for a run: the per-run `override` if given, else the agent's
+ * `reaskOnOutputTrip` (default 0). Never negative. PY parity: `effective_reasks`. */
+export function effectiveReasks(
+  agent: { reaskOnOutputTrip?: number },
+  override?: number | null,
+): number {
+  const n = override ?? agent.reaskOnOutputTrip ?? 0;
+  return Math.max(0, Math.floor(n));
+}
+
+/** Decide whether to re-ask after an output-stage block. Returns `{ reasksLeft, message }`: a
+ * corrective user message (and a decremented budget) when a retry remains, or `{ 0, null }` when the
+ * budget is exhausted — the caller then re-throws the block (fail-closed). PY parity: `reask_step`. */
+export function reaskStep(
+  exc: GuardrailTripped,
+  reasksLeft: number,
+): { reasksLeft: number; message: Message | null } {
+  if (reasksLeft <= 0) return { reasksLeft: 0, message: null };
+  // We recover from this block (return a Result, not throw), so record it on the collector too —
+  // otherwise the re-asked block would be missing from Result.guardrailDecisions. It was already
+  // emitted on the bus (acttrace has it); this keeps the post-hoc accessor consistent.
+  record(exc.decisions);
+  const d = exc.decisions[exc.decisions.length - 1];
+  const reason = d?.reason || `guardrail ${JSON.stringify(d?.guardrail ?? '')}`;
+  return {
+    reasksLeft: reasksLeft - 1,
+    message: { role: 'user', content: REASK_TEMPLATE.replace('{reason}', reason) },
+  };
+}
+
+// --------------------------------------------------------------------------- streaming (partial, S12)
+//
+// Opt-in incremental output checking on run.stream: evaluate the OUTPUT guardrails over the buffered
+// text periodically, so a block can fire earlier in the stream. Deltas already yielded can't be
+// unshown — this narrows the window, it doesn't close it (redact mid-stream isn't applied; only a
+// block matters). Off by default (`Agent.streamCheckWindow = 0`). PY parity: `stream_window` /
+// `gate_stream_partial_async`.
+
+/** The run.stream incremental-check window in chars (`Agent.streamCheckWindow`; 0 = off). */
+export function streamWindow(agent: { streamCheckWindow?: number }): number {
+  return Math.max(0, Math.floor(agent.streamCheckWindow ?? 0));
+}
+
+/** Incremental output check over the buffered stream text. A block **throws** (stopping the stream);
+ * a flag is recorded and the stream continues. Redact isn't applied (deltas already shown). */
+export async function gateStreamPartial(
+  guardrails: Guardrail[],
+  agent: string,
+  text: string,
+  traceId: string,
+): Promise<void> {
+  if (!has(guardrails, 'output')) return;
+  const ctx: Context = { stage: 'output', agent, traceId };
+  const { decisions } = await evaluateAsync(guardrails, 'output', text, ctx); // throws on block
+  record(decisions); // a mid-stream flag is still evidence
+}

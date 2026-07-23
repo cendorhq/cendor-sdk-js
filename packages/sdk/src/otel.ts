@@ -12,7 +12,8 @@ const require = createRequire(import.meta.url);
 
 interface Span {
   setAttribute(key: string, value: unknown): void;
-  end(): void;
+  /** `endTime` (epoch ms) backdates the span's end so live child durations are accurate (S8). */
+  end(endTime?: number): void;
 }
 /** `context`/`startTime` are optional; a fake tracer may ignore them (the real OTel one nests). */
 interface Tracer {
@@ -99,6 +100,51 @@ function toolContentAttrsFor(call: ToolCall): Record<string, string> {
   return coreOtel.toolContentAttrs(call.arguments, call.result);
 }
 
+/**
+ * S7: enrich an LLM span with provider, real latency, finish reason, streamed flag, and any recorded
+ * error — parity with Python `otel._set_call_attrs` (+ `gen_ai.system`). `ttft_ms` / `usage_estimated`
+ * / `replayed` stay stamped at the call sites (already present) to match the Python layout exactly.
+ */
+function setCallAttrs(span: Span, call: LLMCall): void {
+  span.setAttribute('gen_ai.system', call.provider);
+  if (call.latencyMs != null) span.setAttribute('gen_ai.latency_ms', call.latencyMs);
+  const meta = call.metadata ?? {};
+  const finish = meta.finish_reason;
+  if (finish) span.setAttribute('gen_ai.response.finish_reason', String(finish));
+  if (meta.streamed) span.setAttribute('gen_ai.response.streamed', true);
+  const err = meta.error;
+  if (err) {
+    span.setAttribute('error', true);
+    span.setAttribute('gen_ai.error', String(err));
+  }
+}
+
+/**
+ * S7: enrich a tool span with latency and argument *names* (values omitted — may be sensitive).
+ * Parity with Python `otel._set_tool_attrs` (unwraps a nested `kwargs` dict, like the Python helper).
+ */
+function setToolAttrs(span: Span, call: ToolCall): void {
+  if (call.latencyMs != null) span.setAttribute('gen_ai.latency_ms', call.latencyMs);
+  const args = call.arguments;
+  if (args && typeof args === 'object') {
+    const kw = (args as Record<string, unknown>).kwargs;
+    const src = kw && typeof kw === 'object' ? (kw as Record<string, unknown>) : args;
+    const names = Object.keys(src);
+    if (names.length > 0) span.setAttribute('gen_ai.tool.arg_names', names.sort().join(','));
+  }
+}
+
+/** S9: contiguous groups of steps by agent, preserving order — parity with Python `_group_by_agent`. */
+function groupByAgent(steps: readonly Step[]): Array<[string, Step[]]> {
+  const groups: Array<[string, Step[]]> = [];
+  for (const step of steps) {
+    const last = groups[groups.length - 1];
+    if (last && last[0] === step.agent) last[1].push(step);
+    else groups.push([step.agent, [step]]);
+  }
+  return groups;
+}
+
 function stepAttrs(span: Span, step: Step, stepNo: number): void {
   span.setAttribute('gen_ai.agent.name', step.agent);
   span.setAttribute('cendor.step', stepNo); // 1-based ordinal across the run (G13)
@@ -156,27 +202,39 @@ export function spanTree(
   root.setAttribute('gen_ai.usage.input_tokens', result.usage.inputTokens);
   root.setAttribute('gen_ai.usage.output_tokens', result.usage.outputTokens);
   root.setAttribute('cendor.run.cost_usd', result.cost.amount.toString());
-  const ctx = childContext(api, root); // nest call spans UNDER the run root (one trace)
-  let stepNo = 0;
-  for (const step of result.steps) {
-    stepNo += 1;
-    const span = tr.startSpan(
-      step.call instanceof LLMCall ? `chat ${step.name}` : `execute_tool ${step.name}`,
-      undefined,
-      ctx,
-    );
-    span.setAttribute('cendor.trace_id', step.traceId);
-    stepAttrs(span, step, stepNo);
-    if (step.call instanceof LLMCall) {
-      const ttft = step.call.metadata?.ttft_ms; // G-V4-1: TTFT inside a governed journey
-      if (ttft != null) span.setAttribute('cendor.ttft_ms', ttft as number);
-      if (step.call.metadata?.usage_estimated) span.setAttribute('cendor.usage_estimated', 'true'); // G-V4-3
-      if (step.call.metadata.replayed) span.setAttribute('cendor.replayed', true); // G22
-      for (const [k, v] of Object.entries(callContentAttrs(step.call))) span.setAttribute(k, v);
-    } else if (step.call instanceof ToolCall) {
-      for (const [k, v] of Object.entries(toolContentAttrsFor(step.call))) span.setAttribute(k, v);
+  const rootCtx = childContext(api, root); // nest the per-agent segment spans UNDER the run root
+  let stepNo = 0; // 1-based ordinal across the whole run (matches liveSpans' cendor.step)
+  // S9: 3-level tree (root → `agent {name}` segment → call spans), parity with Python span_tree.
+  for (const [agentName, group] of groupByAgent(result.steps)) {
+    const agentSpan = tr.startSpan(`agent ${agentName}`, undefined, rootCtx);
+    agentSpan.setAttribute('gen_ai.operation.name', 'invoke_agent');
+    agentSpan.setAttribute('gen_ai.agent.name', agentName);
+    const ctx = childContext(api, agentSpan); // nest this agent's call spans under its segment span
+    for (const step of group) {
+      stepNo += 1;
+      const span = tr.startSpan(
+        step.call instanceof LLMCall ? `chat ${step.name}` : `execute_tool ${step.name}`,
+        undefined,
+        ctx,
+      );
+      span.setAttribute('cendor.trace_id', step.traceId);
+      stepAttrs(span, step, stepNo);
+      if (step.call instanceof LLMCall) {
+        setCallAttrs(span, step.call); // S7: gen_ai.system + latency + finish_reason + streamed + error
+        const ttft = step.call.metadata?.ttft_ms; // G-V4-1: TTFT inside a governed journey
+        if (ttft != null) span.setAttribute('cendor.ttft_ms', ttft as number);
+        if (step.call.metadata?.usage_estimated)
+          span.setAttribute('cendor.usage_estimated', 'true'); // G-V4-3
+        if (step.call.metadata.replayed) span.setAttribute('cendor.replayed', true); // G22
+        for (const [k, v] of Object.entries(callContentAttrs(step.call))) span.setAttribute(k, v);
+      } else if (step.call instanceof ToolCall) {
+        setToolAttrs(span, step.call); // S7: latency + tool.arg_names
+        for (const [k, v] of Object.entries(toolContentAttrsFor(step.call)))
+          span.setAttribute(k, v);
+      }
+      span.end();
     }
-    span.end();
+    agentSpan.end();
   }
   root.end();
   return true;
@@ -253,9 +311,13 @@ export function liveSpans(
     const meta = (event as { metadata?: Record<string, unknown> }).metadata;
     const agent = currentAgent() || (typeof meta?.agent === 'string' ? meta.agent : '');
     if (agent) agentsSeen.add(agent); // G-V4-2: collect participants for the root
+    // S8: backdate the child's start by the call's latency so its duration is accurate (parity with
+    // Python live_spans + core's own emitter, which both pass start_time/end_time).
+    const end = Date.now();
+    const start = end - (event.latencyMs ?? 0);
     const span = tr.startSpan(
       event instanceof LLMCall ? `chat ${event.model}` : `execute_tool ${event.name}`,
-      undefined,
+      { startTime: start },
       ctx,
     );
     span.setAttribute('cendor.trace_id', traceId);
@@ -264,6 +326,7 @@ export function liveSpans(
     if (event instanceof LLMCall) {
       span.setAttribute('gen_ai.operation.name', 'chat');
       span.setAttribute('gen_ai.request.model', event.model);
+      setCallAttrs(span, event); // S7: gen_ai.system + latency + finish_reason + streamed + error
       if (event.usage) {
         span.setAttribute('gen_ai.usage.input_tokens', event.usage.inputTokens);
         span.setAttribute('gen_ai.usage.output_tokens', event.usage.outputTokens);
@@ -287,9 +350,10 @@ export function liveSpans(
     } else {
       span.setAttribute('gen_ai.operation.name', 'execute_tool');
       span.setAttribute('gen_ai.tool.name', event.name);
+      setToolAttrs(span, event); // S7: latency + tool.arg_names
       for (const [k, v] of Object.entries(toolContentAttrsFor(event))) span.setAttribute(k, v);
     }
-    span.end();
+    span.end(end); // S8: backdated end time (start was backdated by latency above)
   };
   bus.subscribe(sub);
   return {

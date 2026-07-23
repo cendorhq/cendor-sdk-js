@@ -11,7 +11,7 @@ import { z } from 'zod';
 import type { Agent, HandoffTarget } from './agent.js';
 import { type CheckpointState, asCheckpointer } from './checkpoint.js';
 import * as gate from './gate.js';
-import { withScope } from './governance.js';
+import { withConversation, withScope } from './governance.js';
 import { withLiveRootActive } from './otel.js';
 import {
   type EventQueue,
@@ -147,6 +147,7 @@ export async function runAgents(
       output: parseOutput((saved.output ?? null) as string | null, finalAgent.outputType),
       steps: [],
       traceId: saved.run_id ?? '',
+      conversationId: opts.session?.id ?? '', // S6
       agents: [...(saved.seen ?? [])],
       messages: [...(saved.messages ?? [])],
       incomplete: saved.output == null,
@@ -198,29 +199,32 @@ export async function runAgents(
           const segNo = seg;
           const onTurn = ckpt ? (): void => save(false, segNo, a.name) : null;
           const { provider, create } = providerAndCreate(a);
-          const res = await withScope(a, () =>
-            trace(child, async () => {
-              // GLR-4: prepare the entry agent's messages inside its scope (first segment only), so a
-              // retriever's embed call is attributed to the run (traceId=child) rather than firing
-              // outside every scope.
-              if (!prepared) {
-                messages = await prepareMessages(a, input, opts.session);
-                prepared = true;
-              }
-              return withAuditDecision(opts.audit, messages, a.name, a.model, child, () =>
-                agentLoop(a, messages, {
-                  provider,
-                  create,
-                  maxTurns: opts.maxTurns ?? a.maxTurns,
-                  retry: opts.retry ?? null,
-                  toolset,
-                  resolve: toolResolver(toolset),
-                  transferTargets: targets,
-                  onTurn,
-                  guardrails: gate.effective(a, opts.guardrails),
-                }),
-              );
-            }),
+          // S6: withConversation propagates the session key to liveSpans (G19) for the whole team run.
+          const res = await withConversation(opts.session, () =>
+            withScope(a, () =>
+              trace(child, async () => {
+                // GLR-4: prepare the entry agent's messages inside its scope (first segment only), so
+                // a retriever's embed call is attributed to the run (traceId=child) rather than
+                // firing outside every scope.
+                if (!prepared) {
+                  messages = await prepareMessages(a, input, opts.session);
+                  prepared = true;
+                }
+                return withAuditDecision(opts.audit, messages, a.name, a.model, child, () =>
+                  agentLoop(a, messages, {
+                    provider,
+                    create,
+                    maxTurns: opts.maxTurns ?? a.maxTurns,
+                    retry: opts.retry ?? null,
+                    toolset,
+                    resolve: toolResolver(toolset),
+                    transferTargets: targets,
+                    onTurn,
+                    guardrails: gate.effective(a, opts.guardrails),
+                  }),
+                );
+              }),
+            ),
           );
           if (res.switchTo && registry.has(res.switchTo)) {
             active = registry.get(res.switchTo)!;
@@ -236,6 +240,7 @@ export async function runAgents(
           output: parseOutput(output, active.outputType),
           steps,
           traceId: parent,
+          conversationId: opts.session?.id ?? '', // S6
           agents: seen,
           messages,
           incomplete: output === null,
@@ -445,7 +450,38 @@ export async function* streamAgents(
   opts: Omit<RunOptions, 'onStep' | 'retry'> = {},
 ): AsyncGenerator<StreamEvent> {
   const registry = new Map(agents.map((a) => [a.name, a]));
-  const parent = uuidHex();
+  const ckpt = asCheckpointer(opts.checkpoint);
+  const saved = ckpt?.load() ?? null;
+  // S13: a finished team-stream checkpoint replays its stored Result as a lone terminal RunComplete
+  // — no segment runs, no re-yielded deltas (S13-D). Mirrors runAgents' done-resume short-circuit.
+  if (saved?.done) {
+    const finalAgent = registry.get(saved.active ?? '') ?? agents[0]!;
+    yield new RunComplete(
+      new Result({
+        output: parseOutput((saved.output ?? null) as string | null, finalAgent.outputType),
+        steps: [],
+        traceId: saved.run_id ?? '',
+        conversationId: opts.session?.id ?? '', // S6
+        agents: [...(saved.seen ?? [])],
+        messages: [...(saved.messages ?? [])],
+        incomplete: saved.output == null,
+        guardrailDecisions: [],
+      }),
+    );
+    return;
+  }
+  // S13: resume an unfinished team stream (preserves parent/active/seen/seg; skips prepare) or start
+  // fresh (prepare inside the first segment's scope — GLR-4).
+  const {
+    parent,
+    messages: initialMessages,
+    active: startActive,
+    seen,
+    startSeg,
+    prepared: preparedInit,
+  } = resumeState(saved, agents);
+  let messages: Message[] = initialMessages;
+  let prepared = preparedInit;
   const { steps, sub } = makeCollector(
     (t) => t.startsWith(`${parent}:`),
     agentFromTrace(parent),
@@ -453,69 +489,78 @@ export async function* streamAgents(
   );
   bus.subscribe(sub);
   const queue: EventQueue<StreamEvent> = createEventQueue<StreamEvent>();
-  const seen: string[] = [];
-  // GLR-4: prepared inside the first segment's scope (attributes the entry agent's retriever embed).
-  let messages: Message[] = [];
-  let prepared = false;
-  let active: Agent = agents[0]!;
+  let active: Agent = startActive;
   let output: string | null = null;
   const maxSegments = 2 * registry.size + 2;
+  let seg = startSeg;
+  const save = (done: boolean, segNo: number, activeName: string): void => {
+    ckpt?.save({ run_id: parent, messages, active: activeName, seen, seg: segNo, done, output });
+  };
   const produce = async (): Promise<void> => {
     try {
       // withLiveRootActive activates the caller's liveSpans run root for the streamed team run so
       // audit entries correlate + audit.* spans join the run trace (no-op without a scope / OTel).
+      // withConversation (G19/S6) propagates the session key so liveSpans groups multi-turn runs.
       const result = await withLiveRootActive(() =>
-        gate.collecting(async () => {
-          for (let seg = 0; seg < maxSegments; seg++) {
-            if (!seen.includes(active.name)) seen.push(active.name);
-            const child = `${parent}:${active.name}#${seg}`;
-            const { toolset, targets } = effective(active, registry);
-            const a = active;
-            const { provider, create } = providerAndCreate(a);
-            const res = await withScope(a, () =>
-              trace(child, async () => {
-                // GLR-4: prepare inside the first segment's scope so the entry agent's retriever
-                // embed is attributed to the run rather than firing outside every scope.
-                if (!prepared) {
-                  messages = await prepareMessages(a, input, opts.session);
-                  prepared = true;
-                }
-                return withAuditDecision(opts.audit, messages, a.name, a.model, child, () =>
-                  streamSegment(
-                    a,
-                    messages,
-                    {
-                      provider,
-                      create,
-                      maxTurns: opts.maxTurns ?? a.maxTurns,
-                      toolset,
-                      resolve: toolResolver(toolset),
-                      transferTargets: targets,
-                      guardrails: gate.effective(a, opts.guardrails),
-                    },
-                    (ev) => queue.push(ev),
-                  ),
-                );
-              }),
-            );
-            if (res.switchTo && registry.has(res.switchTo)) {
-              active = registry.get(res.switchTo)!;
-              continue;
+        gate.collecting(() =>
+          withConversation(opts.session, async () => {
+            for (seg = startSeg; seg < maxSegments; seg++) {
+              if (!seen.includes(active.name)) seen.push(active.name);
+              const child = `${parent}:${active.name}#${seg}`;
+              const { toolset, targets } = effective(active, registry);
+              const a = active;
+              const segNo = seg;
+              const onTurn = ckpt ? (): void => save(false, segNo, a.name) : null; // S13 per-turn
+              const { provider, create } = providerAndCreate(a);
+              const res = await withScope(a, () =>
+                trace(child, async () => {
+                  // GLR-4/S11: prepare inside the first segment's scope so the entry agent's
+                  // retriever embed is attributed to the run rather than firing outside every scope.
+                  if (!prepared) {
+                    messages = await prepareMessages(a, input, opts.session);
+                    prepared = true;
+                  }
+                  return withAuditDecision(opts.audit, messages, a.name, a.model, child, () =>
+                    streamSegment(
+                      a,
+                      messages,
+                      {
+                        provider,
+                        create,
+                        maxTurns: opts.maxTurns ?? a.maxTurns,
+                        toolset,
+                        resolve: toolResolver(toolset),
+                        transferTargets: targets,
+                        onTurn,
+                        guardrails: gate.effective(a, opts.guardrails),
+                      },
+                      (ev) => queue.push(ev),
+                    ),
+                  );
+                }),
+              );
+              if (res.switchTo && registry.has(res.switchTo)) {
+                active = registry.get(res.switchTo)!;
+                save(false, seg + 1, active.name); // S13: checkpoint the handoff
+                continue;
+              }
+              output = res.output;
+              break;
             }
-            output = res.output;
-            break;
-          }
-          await opts.session?.replace(messages);
-          return new Result({
-            output: parseOutput(output, active.outputType),
-            steps,
-            traceId: parent,
-            agents: seen,
-            messages,
-            incomplete: output === null,
-            guardrailDecisions: gate.snapshot(),
-          });
-        }),
+            await opts.session?.replace(messages);
+            save(true, seg, active.name); // S13: final done save
+            return new Result({
+              output: parseOutput(output, active.outputType),
+              steps,
+              traceId: parent,
+              conversationId: opts.session?.id ?? '', // S6
+              agents: seen,
+              messages,
+              incomplete: output === null,
+              guardrailDecisions: gate.snapshot(),
+            });
+          }),
+        ),
       );
       queue.push(new RunComplete(result));
       queue.close();

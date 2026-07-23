@@ -121,7 +121,7 @@ describe('runDoctor', () => {
   it('gives a clean bill on a correct project', () => {
     write(
       'package.json',
-      '{"name":"x","version":"1.0.0","dependencies":{"@cendor/core":"^0.10.0","openai":"^4.77.0"}}',
+      '{"name":"x","version":"1.0.0","dependencies":{"@cendor/core":"^0.11.0","openai":"^4.77.0"}}',
     );
     write(
       'src/a.ts',
