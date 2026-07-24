@@ -268,7 +268,15 @@ export async function runAgents(
 /** Async alias of {@link runAgents} (JS is async-first; both names exported for parity). */
 export const runAgentsAsync = runAgents;
 
-/** Pipe each agent's output into the next as a fresh user message. */
+/**
+ * Pipe each agent's output into the next as a fresh user message. Honours the per-run governance
+ * surface — `audit`, `maxTurns`, `retry`, `onStep`, and `guardrails` (a per-run override of each
+ * agent's list; decisions collected into `result.guardrailDecisions`). **`session` / `checkpoint`
+ * are not applied by the pipeline shapes** (a pipe has no single conversation to persist or resume —
+ * use a handoff team `runAgents` / `supervisor` for that), and `guardrailMode` is a single-agent-run
+ * option (pipes always gate blocking). They stay on the shared {@link RunOptions} type for a uniform
+ * call shape. Same behaviour as the Python `sequential`.
+ */
 export async function sequential(
   agents: Agent[],
   input: string | Message | Message[],
@@ -329,7 +337,12 @@ export async function sequential(
   }
 }
 
-/** Run each agent on the same input (sequential execution); output is `{name: output}`. */
+/**
+ * Run each agent on the same input (sequential execution); output is `{name: output}`. Honours the
+ * same per-run governance surface as {@link sequential} (`audit` / `maxTurns` / `retry` / `onStep` /
+ * `guardrails` → `result.guardrailDecisions`); `session` / `checkpoint` / `guardrailMode` are not
+ * applied by the pipeline shapes (team- / single-agent-only).
+ */
 export async function parallel(
   agents: Agent[],
   input: string | Message | Message[],
@@ -370,7 +383,11 @@ export async function parallel(
   }
 }
 
-/** Real concurrency via `Promise.all`; output is `{name: output}`. */
+/**
+ * Real concurrency via `Promise.all`; output is `{name: output}`. Honours the same per-run governance
+ * surface as {@link sequential}; `session` / `checkpoint` / `guardrailMode` are not applied by the
+ * pipeline shapes (team- / single-agent-only).
+ */
 export async function parallelAsync(
   agents: Agent[],
   input: string | Message | Message[],

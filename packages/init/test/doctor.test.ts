@@ -3,7 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { runDoctor } from '../src/doctor.js';
+import { versionsSnapshot } from '../src/templates.js';
 import type { Finding, Severity } from '../src/types.js';
+import { rangeBlocksLatest } from '../src/version.js';
+
+// P1 (SFC-D7): the clean-bill fixture derives its @cendor/core pin from the bundled snapshot so a
+// versions-snapshot bump (which broke this test twice) can never make the fixture read as "behind".
+const SNAPSHOT_CORE = versionsSnapshot().npm['@cendor/core'];
 
 let root: string;
 beforeEach(() => {
@@ -119,9 +125,10 @@ describe('runDoctor', () => {
   });
 
   it('gives a clean bill on a correct project', () => {
+    // Pin derived from the bundled snapshot (not hardcoded) — see SNAPSHOT_CORE above.
     write(
       'package.json',
-      '{"name":"x","version":"1.0.0","dependencies":{"@cendor/core":"^0.12.0","openai":"^4.77.0"}}',
+      `{"name":"x","version":"1.0.0","dependencies":{"@cendor/core":"^${SNAPSHOT_CORE}","openai":"^4.77.0"}}`,
     );
     write(
       'src/a.ts',
@@ -130,6 +137,16 @@ describe('runDoctor', () => {
     const r = runDoctor(root);
     expect(r.exitCode).toBe(0);
     expect(titles(r.findings, 'error')).toHaveLength(0);
+    expect(titles(r.findings, 'warn').some((t) => t.includes('behind'))).toBe(false);
     expect(r.findings.some((f) => f.severity === 'ok')).toBe(true);
+  });
+
+  it('the derived clean-bill pin survives a snapshot bump (structural, P1)', () => {
+    // A caret on the exact snapshot version always admits that version, so `doctor` never flags the
+    // clean fixture as "behind" — for the current snapshot AND any hypothetical future bump.
+    expect(rangeBlocksLatest(`^${SNAPSHOT_CORE}`, SNAPSHOT_CORE)).toBe(false);
+    for (const bumped of ['0.13.0', '0.99.1', '1.0.0']) {
+      expect(rangeBlocksLatest(`^${bumped}`, bumped)).toBe(false);
+    }
   });
 });

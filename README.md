@@ -149,11 +149,11 @@ canonical shape, so a run can **hand off between providers** without rewriting i
 > on the agent or client options instead of an API key to authenticate against Azure AI Foundry with
 > Microsoft Entra ID — the token is refreshed per request.
 
-> **Honest limit:** end-to-end token/cost capture for **Hugging Face / Ollama / Gemini / Bedrock**
-> activates once a matching `@cendor/core` release ships the `instrument()` detection for them;
-> OpenAI (Chat + Responses), Anthropic, Azure, and Foundry Local capture today. Runs on every provider
-> *work* now — this is only about automatic usage/cost on the bus. Source of truth: the
-> [parity matrix](https://cendor.ai/docs/languages).
+> **Automatic token/cost capture is live for every provider** — OpenAI (Chat + Responses),
+> Anthropic, Gemini, Bedrock, Ollama, Hugging Face, Azure AI Foundry (Chat + Responses), and Foundry
+> Local. The installed `@cendor/core`'s `instrument()` detects each client and records usage/cost on
+> the bus (Hugging Face / Ollama / Gemini / Bedrock-converse shipped in `@cendor/core` 0.3.0; this
+> package pins the current line). Source of truth: the [parity matrix](https://cendor.ai/docs/languages).
 
 ## More in the box
 
@@ -207,14 +207,15 @@ await run(support, 'How long do refunds take?');   // retrieved context injected
 - **Interop** — `loadMcpTools(...)` (MCP tools/prompts/resources), `A2AServer` / `A2AClient` / `serve` (Agent-to-Agent), `FoundryAdapter` (Bot Framework / Copilot), live OTel spans via `spanTree` / `liveSpans`.
 - **Governed eval** — `evaluate(...)` replays cassette-backed trajectories as CI tests — behaviour *and* spend.
 - **Human-in-the-loop** — `requireApproval(...)` records approvals on the same audit chain the run is correlated by.
-- **v1.1 parity** — live progress hooks (`run(agent, input, { onStep })`), Anthropic prompt caching (`Agent({ cache: true })`), multi-agent streaming, and live OTel spans.
+- **Full agent-loop surface** — live progress hooks (`run(agent, input, { onStep })`), Anthropic prompt caching (`Agent({ cache: true })`), multi-agent streaming with streamed checkpoints, bounded re-ask on an output trip (`Agent({ reaskOnOutputTrip })`), partial-output stream checks (`Agent({ streamCheckWindow })`), and `result.conversationId` auto-stamped from a keyed session.
+- **OpenTelemetry** — post-hoc `spanTree(result)` and live `liveSpans()`, with six first-class `cendor.sdk` telemetry domains on the live path (RAG · memory · orchestration · checkpoints · tools · MCP) that a backend (or Cendor Monitor) renders per domain.
 
 ## Design principles
 
 1. **Cooperate through core.** The SDK hard-depends only on `@cendor/core`; every governance tool integrates through core's bus and interceptor seams — nothing patches anything.
 2. **Governed by default, escapable.** Each layer is one wrapper or one option; removing it never breaks the loop.
 3. **Local-first, no servers.** Sessions, checkpoints, audit chains, and cassettes are local files. Cloud and OpenTelemetry export are opt-in.
-4. **Same API in both languages.** `snake_case` ↔ `camelCase`, identical defaults and error names — see the [parity matrix](https://cendor.ai/docs/languages). Faithful to the Python SDK's v1.1 surface.
+4. **Same API in both languages.** `snake_case` ↔ `camelCase`, identical defaults and error names — see the [parity matrix](https://cendor.ai/docs/languages). Faithful to the Python SDK's surface.
 
 ## Scope & honest limits
 

@@ -3,7 +3,7 @@
  * plain-object fixtures for every provider shape (parse / buildKwargs / translators), so response-shape
  * drift is caught here in isolation, independent of the wire tests in `providers-http.test.ts`.
  */
-import { prices } from '@cendor/core';
+import { LLMCall, bus, instrument, prices } from '@cendor/core';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { z as z3 } from 'zod/v3';
@@ -167,12 +167,34 @@ describe('response normalization', () => {
   });
 });
 
-// DEFERRED — end-to-end usage capture for HF needs new @cendor/core detection (Phase B). The shipped
-// @cendor/core@0.2.0 only detects openai / openai_responses / anthropic, so it cannot attribute an
-// LLMCall to `huggingface` yet. Re-enable once the core release lands and the sdk-js dep is bumped.
-it.todo(
-  'cendor-core attributes the HF chatCompletion client (needs @cendor/core chatCompletion detection)',
-);
+// End-to-end usage capture for HF: `@cendor/core` (≥ 0.3.0; this package pins ^0.12.0) duck-types the
+// `InferenceClient.chatCompletion` method and attributes the LLMCall to `huggingface` (DR-1). Proven
+// here against the *installed* core by instrumenting a chatCompletion-shaped stub and reading the bus.
+describe('HF core detection', () => {
+  it('cendor-core attributes the instrumented HF chatCompletion client to "huggingface"', async () => {
+    const calls: LLMCall[] = [];
+    const sub = (ev: unknown): void => {
+      if (ev instanceof LLMCall) calls.push(ev);
+    };
+    bus.subscribe(sub);
+    try {
+      const client = instrument({
+        chatCompletion: async (_params: unknown) =>
+          openaiChat({ content: 'HF reply', usage: { prompt_tokens: 11, completion_tokens: 7 } }),
+      }) as { chatCompletion: (p: unknown) => Promise<unknown> };
+      await client.chatCompletion({
+        model: 'meta-llama/Meta-Llama-3-8B-Instruct',
+        messages: [{ role: 'user', content: 'hi' }],
+      });
+    } finally {
+      bus.unsubscribe(sub);
+    }
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.provider).toBe('huggingface'); // core detects chatCompletion → HF, not openai
+    expect(calls[0]!.usage?.inputTokens).toBe(11);
+    expect(calls[0]!.usage?.outputTokens).toBe(7);
+  });
+});
 
 // --------------------------------------------------------------------------- Azure / Foundry base-url
 

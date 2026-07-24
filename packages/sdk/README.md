@@ -37,9 +37,8 @@ console.log(verify('audit.jsonl', { key: process.env.KEY })); // [true, "ok: ...
 - **Providers** — OpenAI (Chat Completions + Responses), Anthropic, Google Gemini, AWS Bedrock,
   Ollama, Hugging Face, and Azure AI Foundry (chat + responses) + Foundry Local, driven through the
   real SDKs (`instrument()`ed); provider inferred from the model id, or pass a pre-built `client`.
-  Token/cost capture for Hugging Face, Ollama, Gemini, and Bedrock activates once a `@cendor/core`
-  release ships the matching `instrument()` detection; Azure AI Foundry and Foundry Local capture
-  usage today (standard OpenAI client).
+  Token/cost is captured end-to-end for every provider by the installed `@cendor/core`'s
+  `instrument()` (Hugging Face / Ollama / Gemini / Bedrock-converse shipped in `@cendor/core` 0.3.0).
 - **Tools via zod** — `tool(fn, { parameters: z.object({...}) })` → each provider's native tool shape.
 - **Governance** (the identical re-exported libraries — CI-pinned since 0.10.0, incl. `guard`) — `budget`/`withBudget`, `track`, `report`, `guard`,
   `AuditLog`/`verify`, `registerModelPrice`, `BudgetExceeded`. A bare `run()` needs none of it.
@@ -62,8 +61,11 @@ console.log(verify('audit.jsonl', { key: process.env.KEY })); // [true, "ok: ...
 - **HITL** — `requireApproval` gate. **OTel** — `spanTree`/`liveSpans` (no-op without `@opentelemetry/api`).
 - **Streaming** — `run.stream` / `run.astream` yielding `TextDelta`/`ToolCallEvent`/`ToolResultEvent`/
   `RunComplete`.
-- **Parity with the Python SDK's v1.1 features** — live `onStep` progress hook (a thrown hook never
-  breaks a run), Anthropic prompt caching (`Agent({ cache: true })`), multi-agent streaming.
+- **Full agent-loop surface** — live `onStep` progress hook (a thrown hook never breaks a run),
+  Anthropic prompt caching (`Agent({ cache: true })`), multi-agent streaming with streamed
+  checkpoints, bounded re-ask on an output trip (`reaskOnOutputTrip`), partial-output stream checks
+  (`streamCheckWindow`), `Result.conversationId` from a keyed session, and six `cendor.sdk` telemetry
+  domains on the live OTel path (RAG · memory · orchestration · checkpoints · tools · MCP).
 - **Interop** — MCP client (`loadMcpTools`/`loadMcpPrompts`/`getMcpPrompt`/`loadMcpResources`), A2A
   server + client (`A2AServer`/`A2AClient`/`serve`), a Foundry / Bot Framework adapter
   (`FoundryAdapter`), and durable resumable runs (`Checkpointer`).
@@ -72,9 +74,12 @@ console.log(verify('audit.jsonl', { key: process.env.KEY })); // [true, "ok: ...
 
 ## Honest limits
 
-- End-to-end token/cost capture for Hugging Face, Ollama, Gemini, and Bedrock activates once a
-  `@cendor/core` release ships the matching `instrument()` detection and this package bumps its
-  dependency. Azure AI Foundry and Foundry Local capture usage today (standard OpenAI client).
+- **PII redaction is regex/pattern-based** — no Presidio NER (that's the Python-only `[ner]` extra),
+  so recall is lower on unstructured names/addresses.
+- **Embeddings governance is OpenAI-family only** — `embed()` / `aembed()` capture the OpenAI
+  embeddings client for pre-flight budgeting; other providers surface documented guidance instead.
+- **Gemini / Bedrock / OpenAI-Responses stream one whole-response delta** — not true token-by-token
+  streaming (same honest limit as the Python SDK).
 
 ## Parity
 
