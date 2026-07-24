@@ -13,6 +13,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname } from 'node:path';
+import { emitCheckpoint } from './_telemetry.js';
 import type { Message } from './types.js';
 
 /**
@@ -59,6 +60,14 @@ export class Checkpointer {
     const tmp = `${this.path}.tmp`;
     writeFileSync(tmp, JSON.stringify(state, null, 2));
     renameSync(tmp, this.path);
+    // E-wave: checkpoint.save span (correlated by the run id carried in the state itself).
+    emitCheckpoint(
+      'save',
+      state.run_id ?? '',
+      Boolean(state.done),
+      (state.messages ?? []).length,
+      state.seg ?? null,
+    );
   }
 
   /** Saved messages to resume from, or `null` if there's no unfinished checkpoint. */

@@ -12,6 +12,7 @@
  * const agent = new Agent({ name: 'a', model: 'gpt-4o', tools });
  * ```
  */
+import { mcpConnectOnce, mcpSpan, registerToolSource } from './_telemetry.js';
 import { type JsonSchema, Tool } from './tools.js';
 import type { Message } from './types.js';
 
@@ -50,7 +51,7 @@ function mcpResultText(result: unknown): string {
 }
 
 /** Wrap one MCP tool spec as a governed async {@link Tool} (server schema used verbatim). */
-function wrapMcpTool(session: McpSession, spec: unknown): Tool {
+function wrapMcpTool(session: McpSession, spec: unknown, server = '', transport = ''): Tool {
   const name = (get(spec, 'name') as string) || 'tool';
   const description = (get(spec, 'description') as string) || '';
   const schema = (get(spec, 'inputSchema') ??
@@ -62,15 +63,32 @@ function wrapMcpTool(session: McpSession, spec: unknown): Tool {
   };
 
   // `jsonSchema:` bypasses the zod path so the server's schema is used as-is; `isAsync` auto-derives.
-  return new Tool(call, { name, description, jsonSchema: schema });
+  const tool = new Tool(call, { name, description, jsonSchema: schema });
+  // E-wave: record source so a tool span carries cendor.tool.source="mcp" (+ server/transport).
+  registerToolSource(name, 'mcp', server, transport);
+  return tool;
 }
 
-/** List an MCP session's tools and return them as governed {@link Tool}s. */
-export async function loadMcpTools(session: McpSession): Promise<Tool[]> {
+/**
+ * List an MCP session's tools and return them as governed {@link Tool}s.
+ *
+ * `server` / `transport` are optional, non-secret **attribution labels** (e.g. `"github"` /
+ * `"stdio"`). When given, each tool's spans carry `cendor.tool.source="mcp"` + the server, and the
+ * SDK emits `mcp.connect` (first contact) / `mcp.list_tools` `cendor.sdk` spans so a monitor can
+ * attribute calls per server. Content-free: only labels + counts.
+ */
+export async function loadMcpTools(
+  session: McpSession,
+  opts: { server?: string; transport?: string } = {},
+): Promise<Tool[]> {
+  const { server = '', transport = '' } = opts;
   const listing = await session.listTools();
   let specs = get(listing, 'tools');
   if (specs == null) specs = Array.isArray(listing) ? listing : [];
-  return (specs as unknown[]).map((spec) => wrapMcpTool(session, spec));
+  const tools = (specs as unknown[]).map((spec) => wrapMcpTool(session, spec, server, transport));
+  mcpConnectOnce(server, transport);
+  mcpSpan('mcp.list_tools', { server, transport, toolCount: tools.length });
+  return tools;
 }
 
 /** List an MCP session's prompt templates as `{name: {description, arguments}}` (empty if none). */

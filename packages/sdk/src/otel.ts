@@ -4,7 +4,14 @@
  * span tree from a finished `Result`; `liveSpans` (v1.1) emits a child span the moment each call lands.
  */
 import { createRequire } from 'node:module';
-import { LLMCall, Money, ToolCall, bus, otel as coreOtel } from '@cendor/core';
+import { LLMCall, Money, ToolCall, bus, otel as coreOtel, currentTraceId } from '@cendor/core';
+import {
+  type CheckpointEvent,
+  type MemoryOp,
+  type OrchestrationEdge,
+  type ToolGate,
+  toolSource,
+} from './_telemetry.js';
 import { currentAgent, currentConversation } from './governance.js';
 import type { Result, Step } from './types.js';
 
@@ -134,6 +141,135 @@ function setToolAttrs(span: Span, call: ToolCall): void {
   }
 }
 
+/** Source attribution for a tool span — `local` unless wrapped from an MCP server (E-wave). */
+function toolSourceAttrs(name: string): Record<string, string> {
+  const src = toolSource(name);
+  const attrs: Record<string, string> = { 'cendor.tool.source': src?.source ?? 'local' };
+  if (src?.server) attrs['cendor.tool.mcp.server'] = src.server;
+  if (src?.transport) attrs['cendor.tool.mcp.transport'] = src.transport;
+  return attrs;
+}
+
+/** A tool call's outcome (`ok` | `error`) from the runner's own result convention — a failed tool
+ * returns `[error] …`. Computed in-process; only the label lands on the span, never the result. */
+function toolOutcome(call: ToolCall): string {
+  const r = call.result;
+  return typeof r === 'string' && r.startsWith('[error]') ? 'error' : 'ok';
+}
+
+// --- E-wave domain spans (RAG / memory / orchestration / checkpoints / blocked tools) ------------
+// Rendered by `liveSpans` from bus events (see _telemetry.ts). Each returns [spanName, attrs]; every
+// attrs object carries `cendor.sdk.kind` so a monitor can switch on it robustly. RAG rides the
+// library events (contextkit AssemblyReport / squeeze CompressionEvent) — dispatched by class name.
+
+type DomainSpan = [string, Record<string, unknown>];
+
+function ragAssembleAttrs(ev: Record<string, unknown>): DomainSpan {
+  const decisions = (ev.decisions as Array<Record<string, unknown>> | undefined) ?? [];
+  const kept = decisions.filter((d) => d?.action === 'kept').length;
+  const dropped = decisions.filter((d) => d?.action === 'dropped').length;
+  const before = decisions.reduce((n, d) => n + (Number(d?.tokensBefore) || 0), 0);
+  const after = decisions.reduce((n, d) => n + (Number(d?.tokensAfter) || 0), 0);
+  return [
+    'rag.assemble',
+    {
+      'cendor.sdk.kind': 'rag.assemble',
+      'gen_ai.operation.name': 'rag.assemble',
+      'cendor.rag.budget': Number(ev.budget) || 0,
+      'cendor.rag.used': Number(ev.used) || 0,
+      'cendor.rag.reserved_output': Number(ev.reservedOutput) || 0,
+      'cendor.rag.model': String(ev.model ?? ''),
+      'cendor.rag.blocks': decisions.length,
+      'cendor.rag.kept': kept,
+      'cendor.rag.dropped': dropped,
+      'cendor.rag.tokens_before': before,
+      'cendor.rag.tokens_after': after,
+    },
+  ];
+}
+
+function ragCompressAttrs(ev: Record<string, unknown>): DomainSpan {
+  return [
+    'rag.compress',
+    {
+      'cendor.sdk.kind': 'rag.compress',
+      'gen_ai.operation.name': 'rag.compress',
+      'cendor.rag.technique': String(ev.technique ?? ''),
+      'cendor.rag.tokens_before': Number(ev.tokens_before) || 0,
+      'cendor.rag.tokens_after': Number(ev.tokens_after) || 0,
+      'cendor.rag.ratio': String(ev.ratio ?? ''),
+      'cendor.rag.store_kind': String(ev.store_kind ?? ''),
+      'cendor.rag.kind': String(ev.kind ?? ''),
+    },
+  ];
+}
+
+function memoryAttrs(ev: MemoryOp): DomainSpan {
+  const name = `memory.${ev.op}`;
+  const attrs: Record<string, unknown> = {
+    'cendor.sdk.kind': name,
+    'gen_ai.operation.name': name,
+    'cendor.memory.op': ev.op,
+    'cendor.memory.turns': ev.turns,
+    'cendor.memory.bytes': ev.bytes,
+  };
+  if (ev.sessionId) {
+    attrs['cendor.memory.session_id'] = ev.sessionId;
+    attrs['gen_ai.conversation.id'] = ev.sessionId;
+  }
+  return [name, attrs];
+}
+
+function checkpointAttrs(ev: CheckpointEvent): DomainSpan {
+  const name = `checkpoint.${ev.op}`;
+  const attrs: Record<string, unknown> = {
+    'cendor.sdk.kind': name,
+    'gen_ai.operation.name': name,
+    'cendor.checkpoint.op': ev.op,
+    'cendor.checkpoint.done': ev.done,
+    'cendor.checkpoint.turns': ev.turns,
+  };
+  if (ev.segment != null) attrs['cendor.checkpoint.segment'] = ev.segment;
+  return [name, attrs];
+}
+
+function handoffAttrs(ev: OrchestrationEdge): DomainSpan {
+  return [
+    'orchestration.handoff',
+    {
+      'cendor.sdk.kind': 'orchestration.handoff',
+      'gen_ai.operation.name': 'orchestration.handoff',
+      'cendor.orch.from_agent': ev.fromAgent,
+      'cendor.orch.to_agent': ev.toAgent,
+      'cendor.orch.segment': ev.segment,
+      'cendor.orch.transfer_tool': ev.transferTool,
+    },
+  ];
+}
+
+function toolBlockedAttrs(ev: ToolGate): DomainSpan {
+  const attrs: Record<string, unknown> = {
+    'cendor.sdk.kind': 'execute_tool',
+    'gen_ai.operation.name': 'execute_tool',
+    'gen_ai.tool.name': ev.name,
+    'cendor.tool.outcome': 'blocked',
+    'cendor.tool.blocked_by': ev.blockedBy,
+    ...toolSourceAttrs(ev.name),
+  };
+  if (ev.agent) attrs['gen_ai.agent.name'] = ev.agent;
+  return [`execute_tool ${ev.name}`, attrs];
+}
+
+// biome ignores: `noExplicitAny` is off in this config; builders accept a library or an SDK event.
+const DOMAIN_BUILDERS: Record<string, (ev: any) => DomainSpan> = {
+  AssemblyReport: ragAssembleAttrs,
+  CompressionEvent: ragCompressAttrs,
+  MemoryOp: memoryAttrs,
+  CheckpointEvent: checkpointAttrs,
+  OrchestrationEdge: handoffAttrs,
+  ToolGate: toolBlockedAttrs,
+};
+
 /** S9: contiguous groups of steps by agent, preserving order — parity with Python `_group_by_agent`. */
 function groupByAgent(steps: readonly Step[]): Array<[string, Step[]]> {
   const groups: Array<[string, Step[]]> = [];
@@ -229,6 +365,8 @@ export function spanTree(
         for (const [k, v] of Object.entries(callContentAttrs(step.call))) span.setAttribute(k, v);
       } else if (step.call instanceof ToolCall) {
         setToolAttrs(span, step.call); // S7: latency + tool.arg_names
+        for (const [k, v] of Object.entries(toolSourceAttrs(step.name))) span.setAttribute(k, v);
+        span.setAttribute('cendor.tool.outcome', toolOutcome(step.call)); // E-wave: ok | error
         for (const [k, v] of Object.entries(toolContentAttrsFor(step.call)))
           span.setAttribute(k, v);
       }
@@ -281,21 +419,44 @@ export function liveSpans(
   let convSet = Boolean(opts.conversationId);
   let family = ''; // the run-family root, learned from the first event (GLR-3)
   const agentsSeen = new Set<string>(); // ordered-unique agents → cendor.run.agents (G-V4-2)
-  const sub = (event: unknown): void => {
-    if (!(event instanceof LLMCall || event instanceof ToolCall)) return;
-    const traceId = event.traceId ?? '';
+  const learnAndFilter = (traceId: string): boolean => {
+    // Learn the run-family root from the first observed event: the segment before the first ':'
+    // (orchestration segments are `${parent}:${agent}#${seg}`; a single-agent run is the bare
+    // runId). Matches makeCollector.match + the monitor's run_id normalization. Returns false for a
+    // foreign run (GLR-3 — a concurrent run sharing the process bus must not pollute this one).
     if (!runIdSet && traceId) {
-      // Learn the run-family root from the first observed event: the segment before the first ':'
-      // (orchestration segments are `${parent}:${agent}#${seg}`; a single-agent run is the bare
-      // runId). Matches makeCollector.match + the monitor's run_id normalization.
       family = traceId.includes(':') ? traceId.slice(0, traceId.indexOf(':')) : traceId;
       root.setAttribute('cendor.run.id', family);
       root.setAttribute('cendor.trace_id', family);
       runIdSet = true;
     }
-    // GLR-3: render only events from THIS run family — a concurrent run sharing the process bus must
-    // not pollute this run's steps / rollups / children (same test as makeCollector.match).
-    if (family && traceId !== family && !traceId.startsWith(`${family}:`)) return;
+    return !(family && traceId !== family && !traceId.startsWith(`${family}:`));
+  };
+  // E-wave: render a domain event (RAG/memory/orchestration/checkpoint/blocked-tool) as a
+  // `cendor.sdk` child span. AssemblyReport carries no traceId — read the ambient run scope
+  // (bus.emit is a synchronous same-thread fanout, so the emitting call's trace() scope is active).
+  const domainSpan = (event: any, builder: (e: any) => DomainSpan): void => {
+    // SDK events carry camelCase `traceId`; squeeze's CompressionEvent carries snake_case
+    // `trace_id`; contextkit's AssemblyReport carries neither → read the ambient run scope.
+    const traceId = ((event?.traceId ?? event?.trace_id) as string) || currentTraceId() || '';
+    if (!learnAndFilter(traceId)) return;
+    const [name, attrs] = builder(event);
+    const now = Date.now();
+    const span = tr.startSpan(name, { startTime: now }, ctx);
+    span.setAttribute('cendor.trace_id', traceId);
+    for (const [k, v] of Object.entries(attrs)) if (v != null) span.setAttribute(k, v);
+    span.end(now);
+  };
+  const sub = (event: unknown): void => {
+    const cls = (event as { constructor?: { name?: string } })?.constructor?.name ?? '';
+    const builder = DOMAIN_BUILDERS[cls];
+    if (builder) {
+      domainSpan(event, builder);
+      return;
+    }
+    if (!(event instanceof LLMCall || event instanceof ToolCall)) return;
+    const traceId = event.traceId ?? '';
+    if (!learnAndFilter(traceId)) return;
     if (!convSet) {
       // G19: prefer the conversation id stamped on the event at construction (GLR-2 — survives an
       // out-of-scope delivery), else the ambient scope. Only a real key is used, never synthesized.
@@ -351,6 +512,8 @@ export function liveSpans(
       span.setAttribute('gen_ai.operation.name', 'execute_tool');
       span.setAttribute('gen_ai.tool.name', event.name);
       setToolAttrs(span, event); // S7: latency + tool.arg_names
+      for (const [k, v] of Object.entries(toolSourceAttrs(event.name))) span.setAttribute(k, v);
+      span.setAttribute('cendor.tool.outcome', toolOutcome(event)); // E-wave: ok | error
       for (const [k, v] of Object.entries(toolContentAttrsFor(event))) span.setAttribute(k, v);
     }
     span.end(end); // S8: backdated end time (start was backdated by latency above)

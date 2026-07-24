@@ -10,6 +10,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { AuditLog, Decision } from '@cendor/acttrace';
 import { LLMCall, ToolCall, bus, currentTraceId, installTraceContext, trace } from '@cendor/core';
 import { type Guardrail, GuardrailTripped } from '@cendor/guardrails';
+import { emitCheckpoint, emitMemory } from './_telemetry.js';
 import type { Agent } from './agent.js';
 import { type Checkpointer, asCheckpointer } from './checkpoint.js';
 import * as gate from './gate.js';
@@ -226,6 +227,7 @@ export async function prepareMessages(
   session: SessionLike | null | undefined,
 ): Promise<Message[]> {
   const messages: Message[] = [...(session?.snapshot() ?? []), ...resolveMessages(input)];
+  if (session) emitMemory('load', session, currentTraceId() ?? ''); // E-wave: memory.load span
   if (agent.retriever) await injectRetrievedContext(agent, messages);
   return messages;
 }
@@ -666,6 +668,7 @@ export class Runner {
     // run or re-entering agentLoop (no model call, no tool re-run). Steps are empty (no bus events);
     // the persisted messages/output are returned as-is. PY parity.
     if (saved?.done) {
+      emitCheckpoint('resume', saved.run_id ?? '', true, (saved.messages ?? []).length); // E-wave
       return new Result({
         // Stored `output` is the raw model content persisted at completion (always string | null).
         output: parseOutput((saved.output ?? null) as string | null, agent.outputType),
@@ -685,6 +688,7 @@ export class Runner {
     const { provider, create } = providerAndCreate(agent);
     const maxTurns = this.opts.maxTurns ?? agent.maxTurns;
     const resume = saved && !saved.done ? [...(saved.messages ?? [])] : null;
+    if (resume) emitCheckpoint('resume', saved?.run_id ?? '', false, resume.length); // E-wave
     // GLR-4: prepared inside the run scopes below (so a retriever's embed call is attributed) —
     // captured here for session.replace / checkpoint / Result after the run body returns.
     let messages: Message[] = [];
@@ -742,6 +746,7 @@ export class Runner {
             ),
           );
           await this.opts.session?.replace(messages);
+          if (this.opts.session) emitMemory('save', this.opts.session, runId); // E-wave: memory.save
           ckpt?.save({ run_id: runId, messages, done: true, output: res.output });
           return new Result({
             output: parseOutput(res.output, agent.outputType),
@@ -815,6 +820,7 @@ export async function* streamOne(
   // S13: a finished checkpoint replays its stored Result as a lone terminal RunComplete — no model
   // call, no re-yielded deltas (S13-D). Mirrors Runner.run's done-resume short-circuit.
   if (saved?.done) {
+    emitCheckpoint('resume', saved.run_id ?? '', true, (saved.messages ?? []).length); // E-wave
     yield new RunComplete(
       new Result({
         output: parseOutput((saved.output ?? null) as string | null, agent.outputType),
@@ -830,6 +836,7 @@ export async function* streamOne(
     return;
   }
   const resume = saved && !saved.done ? [...(saved.messages ?? [])] : null; // S13
+  if (resume) emitCheckpoint('resume', saved?.run_id ?? '', false, resume.length); // E-wave
   const runId = uuidHex();
   const { provider, create } = providerAndCreate(agent);
   const maxTurns = opts.maxTurns ?? agent.maxTurns;
@@ -884,6 +891,7 @@ export async function* streamOne(
             ),
           );
           await opts.session?.replace(messages);
+          if (opts.session) emitMemory('save', opts.session, runId); // E-wave: memory.save
           ckpt?.save({ run_id: runId, messages, done: true, output: res.output }); // S13: final done
           return new Result({
             output: parseOutput(res.output, agent.outputType),

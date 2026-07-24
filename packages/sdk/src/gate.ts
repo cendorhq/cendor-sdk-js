@@ -22,6 +22,7 @@ import {
   GuardrailTripped,
   evaluateAsync,
 } from '@cendor/guardrails';
+import { emitToolBlocked } from './_telemetry.js';
 import type { Message } from './types.js';
 
 /** The guardrail execution modes. `blocking` (default) runs input-stage guardrails before the first
@@ -192,6 +193,9 @@ export async function gateToolCall(
   } catch (err) {
     if (err instanceof GuardrailTripped) {
       record(err.decisions);
+      // E-wave: a pre-execution block yields no ToolCall on the bus, so emit the only signal.
+      const d = err.decisions[err.decisions.length - 1];
+      emitToolBlocked(name, d?.guardrail ?? '', traceId, agent);
       return { blocked: blockedMessage(err), args };
     }
     throw err;

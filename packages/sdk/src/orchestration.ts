@@ -8,6 +8,7 @@
  */
 import { bus, trace } from '@cendor/core';
 import { z } from 'zod';
+import { emitCheckpoint, emitHandoff, emitMemory } from './_telemetry.js';
 import type { Agent, HandoffTarget } from './agent.js';
 import { type CheckpointState, asCheckpointer } from './checkpoint.js';
 import * as gate from './gate.js';
@@ -107,6 +108,14 @@ function resumeState(
 } {
   const registry = new Map(agents.map((a) => [a.name, a]));
   if (state && !state.done) {
+    // E-wave: checkpoint.resume span (unfinished team run — continue from the saved state).
+    emitCheckpoint(
+      'resume',
+      state.run_id ?? '',
+      false,
+      (state.messages ?? []).length,
+      state.seg ?? null,
+    );
     return {
       parent: state.run_id || uuidHex(),
       messages: [...(state.messages ?? [])],
@@ -142,6 +151,7 @@ export async function runAgents(
   // the persisted messages/output are returned as-is. PY parity with the single-agent short-circuit.
   if (saved?.done) {
     const finalAgent = registry.get(saved.active ?? '') ?? agents[0]!;
+    emitCheckpoint('resume', saved.run_id ?? '', true, (saved.messages ?? []).length); // E-wave
     return new Result({
       // Stored `output` is the raw model content persisted at completion (always string | null).
       output: parseOutput((saved.output ?? null) as string | null, finalAgent.outputType),
@@ -227,6 +237,7 @@ export async function runAgents(
             ),
           );
           if (res.switchTo && registry.has(res.switchTo)) {
+            emitHandoff(active.name, res.switchTo, seg, `transfer_to_${res.switchTo}`, parent); // E-wave
             active = registry.get(res.switchTo)!;
             save(false, seg + 1, active.name);
             continue;
@@ -235,6 +246,7 @@ export async function runAgents(
           break;
         }
         await opts.session?.replace(messages);
+        if (opts.session) emitMemory('save', opts.session, parent); // E-wave: memory.save
         save(true, seg, active.name, output);
         return new Result({
           output: parseOutput(output, active.outputType),
@@ -456,6 +468,7 @@ export async function* streamAgents(
   // — no segment runs, no re-yielded deltas (S13-D). Mirrors runAgents' done-resume short-circuit.
   if (saved?.done) {
     const finalAgent = registry.get(saved.active ?? '') ?? agents[0]!;
+    emitCheckpoint('resume', saved.run_id ?? '', true, (saved.messages ?? []).length); // E-wave
     yield new RunComplete(
       new Result({
         output: parseOutput((saved.output ?? null) as string | null, finalAgent.outputType),
@@ -540,6 +553,7 @@ export async function* streamAgents(
                 }),
               );
               if (res.switchTo && registry.has(res.switchTo)) {
+                emitHandoff(active.name, res.switchTo, seg, `transfer_to_${res.switchTo}`, parent); // E-wave
                 active = registry.get(res.switchTo)!;
                 save(false, seg + 1, active.name); // S13: checkpoint the handoff
                 continue;
@@ -548,6 +562,7 @@ export async function* streamAgents(
               break;
             }
             await opts.session?.replace(messages);
+            if (opts.session) emitMemory('save', opts.session, parent); // E-wave: memory.save
             save(true, seg, active.name); // S13: final done save
             return new Result({
               output: parseOutput(output, active.outputType),
