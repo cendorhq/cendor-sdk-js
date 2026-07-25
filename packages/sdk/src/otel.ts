@@ -3,6 +3,7 @@
  * installed (local-first: telemetry export is always opt-in). `spanTree` emits a post-hoc `gen_ai.*`
  * span tree from a finished `Result`; `liveSpans` (v1.1) emits a child span the moment each call lands.
  */
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { createRequire } from 'node:module';
 import { LLMCall, Money, ToolCall, bus, otel as coreOtel, currentTraceId } from '@cendor/core';
 import {
@@ -58,7 +59,41 @@ function childContext(api: OtelApi | null, root: Span): unknown {
  * context. The runner uses the innermost to install the run root as the ACTIVE context span for the
  * run body — see {@link withLiveRootActive}.
  */
-const liveScopes: Array<{ api: OtelApi; ctx: unknown }> = [];
+type LiveScope = { api: OtelApi; ctx: unknown };
+// Held in AsyncLocalStorage, not a module array: once `run()` opens a scope automatically, a server
+// handling concurrent runs would otherwise share ONE global stack and parent run A's children under
+// run B's root (the same class of defect as the module-global emitter latch, W0.5). ALS gives each
+// async context its own view; a scope opened before an `await` is visible to everything the caller
+// then starts, matching Python's ContextVar semantics.
+const scopeStore = (() => {
+  try {
+    return new AsyncLocalStorage<LiveScope[]>();
+  } catch {
+    return null; // non-Node runtime — fall back to the module array below
+  }
+})();
+let scopesFallback: LiveScope[] = [];
+
+function currentScopes(): LiveScope[] {
+  return scopeStore ? (scopeStore.getStore() ?? []) : scopesFallback;
+}
+function pushScope(scope: LiveScope): void {
+  const next = [...currentScopes(), scope];
+  if (scopeStore) scopeStore.enterWith(next);
+  else scopesFallback = next;
+}
+function removeScope(scope: LiveScope): void {
+  const next = currentScopes().filter((s) => s !== scope);
+  if (scopeStore) scopeStore.enterWith(next);
+  else scopesFallback = next;
+}
+
+/** Run `fn` with the scope stack isolated, so a scope opened inside cannot leak into the caller's
+ * context (the counterpart of `@cendor/core`'s `_isolateLiveSpans` — see its comment for why). */
+function isolateScopes<T>(fn: () => T): T {
+  if (!scopeStore) return fn();
+  return scopeStore.run([...currentScopes()], fn);
+}
 
 /**
  * Run `fn` with the innermost open `liveSpans` root installed as the **active context span** (parity
@@ -73,7 +108,8 @@ const liveScopes: Array<{ api: OtelApi; ctx: unknown }> = [];
  * @internal called by the runner/orchestration around each run body.
  */
 export function withLiveRootActive<T>(fn: () => T): T {
-  const top = liveScopes[liveScopes.length - 1];
+  const scopes = currentScopes();
+  const top = scopes[scopes.length - 1];
   return top ? top.api.context.with(top.ctx, fn) : fn();
 }
 
@@ -404,13 +440,16 @@ export function liveSpans(
   const { tr, api } = r;
   coreOtel.enterLiveSpans(); // G20: the core bus→span emitter stands down while we own the spans
   const root = tr.startSpan(opts.name ?? 'agent.run');
+  // Parity with `spanTree` and the Python `live_spans` root (a backend that groups by
+  // gen_ai.operation.name — and Cendor Monitor's door router — reads this, not just the span name).
+  root.setAttribute('gen_ai.operation.name', 'agent');
   if (opts.conversationId) root.setAttribute('gen_ai.conversation.id', opts.conversationId);
   if (opts.label) root.setAttribute('cendor.run.label', opts.label);
   const ctx = childContext(api, root); // nest each live child UNDER the run root (one trace)
   // Register this scope so the runner can make `root` the active context span for the run body
   // (real API only; an injected fake tracer models no context, so it never activates — unchanged).
   const scope = api ? { api, ctx } : null;
-  if (scope) liveScopes.push(scope);
+  if (scope) pushScope(scope);
   let stepNo = 0;
   let totalInput = 0;
   let totalOutput = 0;
@@ -522,11 +561,7 @@ export function liveSpans(
   return {
     close() {
       bus.unsubscribe(sub);
-      if (scope) {
-        // Remove THIS scope by identity (safe under nesting / out-of-order close).
-        const i = liveScopes.indexOf(scope);
-        if (i >= 0) liveScopes.splice(i, 1);
-      }
+      if (scope) removeScope(scope); // by identity — safe under nesting / out-of-order close
       coreOtel.exitLiveSpans();
       // Usage/cost rollups on the root at close — parity with spanTree's finished totals.
       root.setAttribute('gen_ai.usage.input_tokens', totalInput);
@@ -537,4 +572,75 @@ export function liveSpans(
       root.end();
     },
   };
+}
+
+// ------------------------------------------------------------------ the automatic run scope (DR-1)
+/**
+ * Open a `liveSpans` scope for a run **only when nobody else has** — the zero-telemetry-code path.
+ *
+ * Returns `null` (nothing opened) when `CENDOR_TELEMETRY=off`, when the app has not configured an
+ * OpenTelemetry provider, or when an explicit `liveSpans()` scope is already open (theirs wins — a
+ * second root would nest a duplicate run). The caller owns closing it in a `finally`, so the
+ * unclosed-handle foot-gun of the public API does not apply to the automatic path.
+ *
+ * The conversation id comes from the run's `session` — the id the user chose. No label is invented:
+ * `cendor.run.label` is a human-authored tag, and inventing one would be identity Cendor does not own.
+ *
+ * @internal called by the runner/orchestration around each run body.
+ */
+export function autoRunScope(session?: { id?: string | null } | null): { close(): void } | null {
+  try {
+    if (coreOtel.telemetryMode() === 'off') return null;
+    if (coreOtel.liveSpansActive()) return null;
+    if (!coreOtel.providerConfigured()) return null;
+  } catch {
+    return null; // telemetry must never break a run (e.g. an older @cendor/core)
+  }
+  return liveSpans(session?.id ? { conversationId: session.id } : {});
+}
+
+/**
+ * Run `fn` inside {@link autoRunScope}, closing it in a `finally` the SDK owns.
+ *
+ * Both the core latch and this module's scope stack are **isolated** for the duration, so the scope
+ * cannot leak into the caller's async context — otherwise `await run(...)` would leave the caller
+ * latched (its later libs-only calls silently losing their spans) and two concurrent runs would share
+ * one scope, parenting one run's steps under the other's root.
+ */
+export async function withAutoRunScope<T>(
+  session: { id?: string | null } | null | undefined,
+  fn: () => Promise<T>,
+): Promise<T> {
+  return coreOtel._isolateLiveSpans(() =>
+    isolateScopes(async () => {
+      const scope = autoRunScope(session);
+      if (scope === null) return fn();
+      try {
+        return await fn();
+      } finally {
+        scope.close();
+      }
+    }),
+  );
+}
+
+/** Wrap a stream generator so its automatic scope opens **inside** the generator's own isolated
+ * store and closes when the stream ends or is abandoned. */
+export function autoScopeStream<T>(
+  session: { id?: string | null } | null | undefined,
+  inner: () => AsyncGenerator<T>,
+): AsyncGenerator<T> {
+  return (async function* () {
+    // The `await` FIRST is load-bearing: a generator body's first resumption runs in the CONSUMER's
+    // async context, so opening the scope before it would bind the consumer (leaving their context
+    // latched after the stream ends — the P1 defect class). One microtask later the body owns its own
+    // context: the producer it starts inherits the scope, and the consumer never sees it.
+    await Promise.resolve();
+    const scope = autoRunScope(session);
+    try {
+      yield* inner();
+    } finally {
+      scope?.close();
+    }
+  })();
 }

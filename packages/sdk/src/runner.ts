@@ -15,7 +15,7 @@ import type { Agent } from './agent.js';
 import { type Checkpointer, asCheckpointer } from './checkpoint.js';
 import * as gate from './gate.js';
 import { withConversation, withScope } from './governance.js';
-import { withLiveRootActive } from './otel.js';
+import { autoScopeStream, withAutoRunScope, withLiveRootActive } from './otel.js';
 import { type Provider, assistantMessage, toolResultMessage } from './providers.js';
 import { formatContext } from './rag.js';
 import { type RetryPolicy, callWithRetry } from './resilience.js';
@@ -783,11 +783,15 @@ async function runImpl(
   input: string | Message | Message[],
   opts: RunOptions = {},
 ): Promise<Result> {
-  if (Array.isArray(agent)) {
-    const { runAgents } = await import('./orchestration.js');
-    return runAgents(agent, input, opts);
-  }
-  return new Runner(agent, opts).run(input);
+  // DR-1: telemetry with zero telemetry code — open the run scope ourselves when the app has an OTel
+  // provider and has not opened one itself. Closed in a `finally` we own.
+  return withAutoRunScope(opts.session, async () => {
+    if (Array.isArray(agent)) {
+      const { runAgents } = await import('./orchestration.js');
+      return runAgents(agent, input, opts);
+    }
+    return new Runner(agent, opts).run(input);
+  });
 }
 
 async function* streamImpl(
@@ -795,12 +799,17 @@ async function* streamImpl(
   input: string | Message | Message[],
   opts: Omit<RunOptions, 'onStep' | 'retry'> = {},
 ): AsyncGenerator<StreamEvent> {
-  if (Array.isArray(agent)) {
-    const { streamAgents } = await import('./orchestration.js');
-    yield* streamAgents(agent, input, opts);
-    return;
-  }
-  yield* streamOne(agent, input, opts);
+  // DR-1: same automatic scope as `run()`, opened for the life of the stream inside its own isolated
+  // store and closed in a `finally` — including abandonment, since the consumer's `break` closes this
+  // generator.
+  yield* autoScopeStream(opts.session, async function* () {
+    if (Array.isArray(agent)) {
+      const { streamAgents } = await import('./orchestration.js');
+      yield* streamAgents(agent, input, opts);
+      return;
+    }
+    yield* streamOne(agent, input, opts);
+  });
 }
 
 /**

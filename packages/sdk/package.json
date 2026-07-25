@@ -24,13 +24,13 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@cendor/acttrace": "^0.11.3",
-    "@cendor/cassette": "^0.3.2",
-    "@cendor/contextkit": "^2.0.5",
-    "@cendor/core": "^0.12.0",
-    "@cendor/guardrails": "^0.7.6",
-    "@cendor/squeeze": "^0.3.5",
-    "@cendor/tokenguard": "^0.6.1",
+    "@cendor/acttrace": "^0.12.0",
+    "@cendor/cassette": "^0.3.5",
+    "@cendor/contextkit": "^2.0.7",
+    "@cendor/core": "^0.14.1",
+    "@cendor/guardrails": "^0.7.8",
+    "@cendor/squeeze": "^0.3.7",
+    "@cendor/tokenguard": "^0.8.0",
     "zod": "^4.0.0"
   },
   "optionalDependencies": {
@@ -76,5 +76,10 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "devDependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/context-async-hooks": "^2.1.0",
+    "@opentelemetry/sdk-trace-base": "^2.1.0"
   }
 }
