@@ -253,6 +253,88 @@ function checkPriceSnapshot(root: string, detected: Detected, out: Finding[]): v
   }
 }
 
+// --------------------------------------------------------------------------- telemetry (the switch)
+/** Source patterns that mean "this app configures an OpenTelemetry provider itself". */
+const OTEL_PROVIDER_RE =
+  /setGlobalTracerProvider\s*\(|new\s+NodeSDK\s*\(|useAzureMonitor\s*\(|OTEL_EXPORTER_OTLP_ENDPOINT/;
+/** Floors for the automatic path (the versions that carry the switch). */
+export const TELEMETRY_FLOORS: Record<string, string> = {
+  '@cendor/core': '0.15.0',
+  '@cendor/sdk': '0.22.0',
+  '@cendor/acttrace': '0.13.0',
+  '@cendor/tokenguard': '0.7.0',
+};
+
+/**
+ * Telemetry wiring, statically.
+ *
+ * Three things can silently cost an app its telemetry: `CENDOR_TELEMETRY=off` committed next to a
+ * configured provider, an OTel pipeline on a Cendor too old to emit by itself, and a
+ * `new OTelSink()` on `@cendor/tokenguard` < 0.7.0 constructed above the provider (a permanent
+ * no-op counter — the JS metrics API has no proxy). None of them raises at runtime, because the
+ * emitters are deliberately silent, so they belong in `doctor`.
+ */
+function checkTelemetry(root: string, detected: Detected, src: SourceIndex, out: Finding[]): void {
+  const files = [...src.pyFiles, ...src.nodeFiles];
+  const configures = files.some((f) => OTEL_PROVIDER_RE.test(f.text));
+  const offLocations = files
+    .filter((f) => f.text.includes('CENDOR_TELEMETRY=off'))
+    .map((f) => rel(root, f.path));
+  if (configures && offLocations.length > 0) {
+    out.push({
+      severity: 'warn',
+      title: 'CENDOR_TELEMETRY=off next to a configured OpenTelemetry provider',
+      detail:
+        'This app configures an OTel provider, but `CENDOR_TELEMETRY=off` appears in the source/config ' +
+        '— so Cendor emits nothing: no call spans, no spend counters, no governance spans. That is a ' +
+        'valid choice; it is only worth flagging because nothing warns at runtime.',
+      fix: 'Remove `CENDOR_TELEMETRY=off` (or set it to `auto`) to let telemetry flow.',
+      locations: offLocations,
+    });
+  }
+  if (configures) {
+    const behind: string[] = [];
+    for (const [pkg, floor] of Object.entries(TELEMETRY_FLOORS)) {
+      const installed = detected.installedNpm[pkg];
+      const have = installed ? cleanVersion(installed) : null;
+      if (have && compareVersions(have, floor) < 0) behind.push(`${pkg} ${have} < ${floor}`);
+    }
+    if (behind.length > 0) {
+      out.push({
+        severity: 'warn',
+        title: 'A Cendor package predates automatic telemetry',
+        detail:
+          'This app configures an OpenTelemetry provider, but a package is older than the release ' +
+          'where Cendor started emitting on its own. Until you upgrade, telemetry needs the explicit ' +
+          'attachments (`otel.useSpanEmitter()`, `useSink(new OTelSink())`, `liveSpans()`, ' +
+          '`new AuditLog(s, { mirror: new OTelMirror() })`).',
+        fix: 'npm i @cendor/core@latest @cendor/sdk@latest',
+        locations: behind,
+      });
+    }
+  }
+  const sinkFiles = src.nodeFiles.filter((f) => f.text.includes('new OTelSink('));
+  const tgInstalled = detected.installedNpm['@cendor/tokenguard'];
+  const tgOld = tgInstalled
+    ? compareVersions(cleanVersion(tgInstalled) ?? '0.0.0', '0.7.0') < 0
+    : false;
+  if (sinkFiles.length > 0) {
+    out.push({
+      severity: tgOld ? 'warn' : 'info',
+      title: tgOld
+        ? 'new OTelSink() on @cendor/tokenguard < 0.7.0 (order-sensitive)'
+        : 'TypeScript OTelSink constructed by hand',
+      detail:
+        'In `@cendor/tokenguard` < 0.7.0 a sink constructed BEFORE the app’s provider bound a ' +
+        'no-op counter permanently (the JS metrics API has no proxy), so spend counters were silently ' +
+        'empty. From 0.7.0 the meter is acquired lazily and order no longer matters — and the ' +
+        'automatic spend tap means you usually need no sink at all.',
+      fix: 'Drop the explicit sink (telemetry flows on its own), or upgrade: npm i @cendor/tokenguard@latest',
+      locations: sinkFiles.map((f) => rel(root, f.path)),
+    });
+  }
+}
+
 export function runDoctor(root: string): DoctorResult {
   const detected = detectProject(root);
   const src = indexSources(root);
@@ -264,6 +346,7 @@ export function runDoctor(root: string): DoctorResult {
   checkBareImport(root, src, findings);
   checkInstrument(src, u, findings);
   checkMoney(root, src, findings);
+  checkTelemetry(root, detected, src, findings);
 
   // Native-ecosystem checks.
   if (detected.node) {

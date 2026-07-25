@@ -30,6 +30,17 @@ console.log(verify('audit.jsonl', { key: process.env.KEY })); // [true, "ok: ...
 `Agent` (or drop `client` and let the SDK build it). No Cendor-specific key.
 [Keys & providers →](https://cendor.ai/docs/sdk/providers#api-keys--credentials)
 
+
+## Your runs show up in your backend, with no telemetry code (0.22.0)
+
+Configure an OpenTelemetry provider the way you already would (or point `OTEL_EXPORTER_OTLP_ENDPOINT`
+at [Cendor Monitor](https://cendor.ai/docs/monitor)) and `run()` does the rest: an `agent.run` root with
+its steps as children, usage/cost rollups, your `session` id as `gen_ai.conversation.id`, and — because
+the root is the active span — governance correlated to the run, including `governance.*` spans for the
+budget or guardrail that stopped it. An explicit `live_spans()`/`liveSpans()` still wins;
+`CENDOR_TELEMETRY=off` turns it all off; `CENDOR_DEBUG_TELEMETRY=1` says what was detected. Cendor has
+no endpoint, exporter or key — it emits into **your** provider.
+
 ## What's implemented
 
 - **Agent loop** — `run(agent, input, opts)` (async), tool calling, `maxTurns`, structured output

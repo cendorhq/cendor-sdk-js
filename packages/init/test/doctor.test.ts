@@ -150,3 +150,53 @@ describe('runDoctor', () => {
     }
   });
 });
+
+// --------------------------------------------------------------------------- telemetry (the switch)
+// Since @cendor/core 0.15 telemetry flows on its own, so the failure modes moved: not "you forgot to
+// attach", but "you turned it off next to a configured provider" or "your Cendor is too old to emit".
+// Neither warns at runtime (the emitters are deliberately silent), so doctor is where they surface.
+
+describe('doctor — telemetry', () => {
+  it('flags CENDOR_TELEMETRY=off next to a configured provider (warn, not a CI failure)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cendor-doctor-'));
+    writeFileSync(
+      join(dir, 'package.json'),
+      '{"name":"app","dependencies":{"@cendor/sdk":"^0.22.0"}}',
+    );
+    writeFileSync(
+      join(dir, 'app.ts'),
+      "import { NodeSDK } from '@opentelemetry/sdk-node';\nnew NodeSDK({}).start();\n// deploy: CENDOR_TELEMETRY=off\n",
+    );
+    const res = runDoctor(dir);
+    expect(res.findings.some((f) => f.title.includes('CENDOR_TELEMETRY=off'))).toBe(true);
+    expect(res.exitCode).toBe(0);
+  });
+
+  it('says nothing about telemetry when no provider is configured', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cendor-doctor-'));
+    writeFileSync(
+      join(dir, 'package.json'),
+      '{"name":"app","dependencies":{"@cendor/core":"^0.15.0"}}',
+    );
+    writeFileSync(
+      join(dir, 'app.ts'),
+      "import { instrument } from '@cendor/core';\ninstrument(client);\n",
+    );
+    const res = runDoctor(dir);
+    expect(res.findings.some((f) => f.title.includes('CENDOR_TELEMETRY'))).toBe(false);
+  });
+
+  it('notes a hand-written OTelSink (the historical ordering trap)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cendor-doctor-'));
+    writeFileSync(
+      join(dir, 'package.json'),
+      '{"name":"app","dependencies":{"@cendor/tokenguard":"^0.8.1"}}',
+    );
+    writeFileSync(
+      join(dir, 'app.ts'),
+      "import { OTelSink } from '@cendor/tokenguard/sinks';\nuseSink(new OTelSink());\n",
+    );
+    const res = runDoctor(dir);
+    expect(res.findings.some((f) => f.title.includes('OTelSink'))).toBe(true);
+  });
+});
