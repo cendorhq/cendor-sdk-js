@@ -180,4 +180,126 @@ describe('the automatic run scope', () => {
     expect(new Set(parents).size).toBe(2);
     for (const p of parents) expect(roots.map((r) => r.spanContext().spanId)).toContain(p);
   });
+
+  // ------------------------------------------------------------------ GLR-3: no cross-run adoption
+  // These four use clients with REAL latency, so the runs genuinely overlap. With zero-latency stubs
+  // a run finishes before the next one starts and the bus never interleaves — which is why the defect
+  // below survived the wave: every acceptance probe was sequential.
+  /** An openai-shaped client whose completion takes `ms`, so two runs are in flight at once. */
+  function slowAgent(model: string, content: string, ms: number): Agent {
+    return new Agent({
+      name: 'assistant',
+      model,
+      client: {
+        chat: {
+          completions: {
+            create: async () => {
+              await new Promise((r) => setTimeout(r, ms));
+              return openaiChat({ content });
+            },
+          },
+        },
+      } as never,
+    });
+  }
+  /** Each run's own root, keyed by the run id it learned. */
+  function rootsByRunId(): Map<string, string> {
+    return new Map(
+      exporter
+        .getFinishedSpans()
+        .filter((s) => s.name === 'agent.run')
+        .map((s) => [String(s.attributes['cendor.run.id'] ?? ''), s.spanContext().spanId]),
+    );
+  }
+
+  it('two OVERLAPPING runs never adopt each other’s calls', async () => {
+    await Promise.all([
+      run(slowAgent('gpt-4o-mini', 'a', 30), 'hi'),
+      run(slowAgent('gpt-4.1-mini', 'b', 10), 'hi'),
+    ]);
+    const spans = exporter.getFinishedSpans();
+    const roots = spans.filter((s) => s.name === 'agent.run');
+    expect(roots).toHaveLength(2);
+    // Each root learned its OWN run id (both used to end up with the id of whichever run emitted
+    // first) and each call was rendered exactly once, under the root of the run that made it.
+    const byRunId = rootsByRunId();
+    expect(byRunId.size).toBe(2);
+    expect([...byRunId.keys()].every(Boolean)).toBe(true);
+    const chats = spans.filter((s) => s.name.startsWith('chat '));
+    expect(chats.map((c) => c.name).sort()).toEqual(['chat gpt-4.1-mini', 'chat gpt-4o-mini']);
+    for (const c of chats) {
+      expect(c.parentSpanContext?.spanId).toBe(
+        byRunId.get(String(c.attributes['cendor.trace_id'])),
+      );
+    }
+  });
+
+  it('a stream in flight does not silence a concurrent run', async () => {
+    const stream = run.stream(streamingAgent(), 'hi')[Symbol.asyncIterator]();
+    await stream.next(); // the stream's scope is open
+    // The automatic stream scope is bound to the STREAM's async context, so the consumer's context is
+    // clean: a concurrent run still opens its own scope (it used to see a process-wide latch and emit
+    // nothing at all — neither a root nor a flat span).
+    const { otel } = await import('@cendor/core');
+    expect(otel.liveSpansActive()).toBe(false);
+    await run(slowAgent('gpt-4.1-mini', 'b', 5), 'hi');
+    while (!(await stream.next()).done) {
+      /* drain */
+    }
+    const spans = exporter.getFinishedSpans();
+    expect(spans.filter((s) => s.name === 'agent.run')).toHaveLength(2);
+    expect(
+      spans
+        .filter((s) => s.name.startsWith('chat '))
+        .map((s) => s.name)
+        .sort(),
+    ).toEqual(['chat gpt-4.1-mini', 'chat gpt-4o']);
+  });
+
+  it('a run-less libs-only call is not adopted into a run', async () => {
+    const { LLMCall, Usage } = await import('@cendor/core');
+    await Promise.all([
+      run(slowAgent('gpt-4o-mini', 'a', 25), 'hi'),
+      (async () => {
+        await new Promise((r) => setTimeout(r, 5));
+        bus.emit(
+          new LLMCall({
+            id: 'x1',
+            provider: 'openai',
+            model: 'libs-only-model',
+            messages: [],
+            usage: new Usage(10, 5),
+          }),
+        );
+      })(),
+    ]);
+    // A call with no run id belongs to no run: core's flat emitter renders it, the run scope must not
+    // (it used to become the run's step 1, putting a foreign call's cost inside the run).
+    const spans = exporter.getFinishedSpans();
+    const root = spans.find((s) => s.name === 'agent.run')!;
+    const children = spans.filter((s) => s.parentSpanContext?.spanId === root.spanContext().spanId);
+    expect(children.map((c) => c.name)).toEqual(['chat gpt-4o-mini']);
+  });
+
+  it('a STREAMED run correlates its governance to the run trace', async () => {
+    const audit = new AuditLog('support'); // its mirror auto-attaches (DR-2a)
+    try {
+      for await (const _ev of run.stream(streamingAgent(), 'hi', { audit })) {
+        /* drain */
+      }
+    } finally {
+      audit.detach();
+    }
+    // Parity with the blocking path (and with Python): the run root is the active span inside the
+    // stream too, so the mirrored audit spans land in the run's trace. Binding the scope around the
+    // generator's *creation* achieved nothing — an async generator body resumes in the CONSUMER's
+    // context — so this was 0 of 5 before the scope moved to each resumption.
+    const spans = exporter.getFinishedSpans();
+    const root = spans.find((s) => s.name === 'agent.run')!;
+    const audits = spans.filter((s) => s.name.startsWith('audit.'));
+    expect(audits.length).toBeGreaterThan(0);
+    expect(
+      audits.filter((a) => a.spanContext().traceId === root.spanContext().traceId).length,
+    ).toBeGreaterThan(0);
+  });
 });

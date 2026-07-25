@@ -114,6 +114,38 @@ function withScope<T>(scope: LiveScope | null, fn: () => T): T {
   return scopeStore.run([...currentScopes(), scope], fn);
 }
 
+// ------------------------------------------------------------------ run-family claims (GLR-3 fix)
+// A scope learns which run it belongs to from the first event it observes — but `bus.emit` is a
+// process-wide fanout, so with `run()` opening a scope automatically the FIRST event a scope sees can
+// belong to a *different, concurrent* run. Measured before this registry existed: two overlapping
+// zero-code runs rendered one run's call twice (once under each root), dropped the other's entirely,
+// and stamped both roots with the same `cendor.run.id`. So a family may be claimed by exactly one
+// open scope: a scope never learns a family another scope already owns, and skips its events.
+/** A scope's claim on one run family: its identity token + the registry entry to activate. */
+type FamilyOwner = { token: object; scope: LiveScope | null };
+const claimedFamilies = new Map<string, FamilyOwner>();
+
+/** The run family of a trace id: orchestration segments are `${parent}:${agent}#${seg}`. */
+function familyOf(traceId: string): string {
+  return traceId.includes(':') ? traceId.slice(0, traceId.indexOf(':')) : traceId;
+}
+/** Claim `family` for this scope. False when another open scope already owns it. */
+function claimFamily(family: string, owner: FamilyOwner): boolean {
+  const held = claimedFamilies.get(family);
+  if (held !== undefined) return held.token === owner.token;
+  claimedFamilies.set(family, owner);
+  return true;
+}
+function releaseFamily(family: string, owner: FamilyOwner): void {
+  if (family && claimedFamilies.get(family)?.token === owner.token) claimedFamilies.delete(family);
+}
+/** The open scope that owns `traceId`'s run family, if any — so the right run root is activated even
+ * when several scopes are visible (two concurrent streams share the consumer's context). */
+function scopeOwning(traceId: string): LiveScope | null | undefined {
+  if (!traceId) return undefined;
+  return claimedFamilies.get(familyOf(traceId))?.scope;
+}
+
 /**
  * Run `fn` with the innermost open `liveSpans` root installed as the **active context span** (parity
  * with Python's `start_as_current_span`), so audit entries emitted during the run carry the run's
@@ -127,8 +159,11 @@ function withScope<T>(scope: LiveScope | null, fn: () => T): T {
  * @internal called by the runner/orchestration around each run body.
  */
 export function withLiveRootActive<T>(fn: () => T): T {
+  // Prefer the scope that owns the ambient run (exact, even when two scopes are visible at once);
+  // fall back to the innermost visible scope, which is what a run has before its first event.
   const scopes = currentScopes();
-  const top = scopes[scopes.length - 1];
+  const owner = scopeOwning(currentTraceId() ?? '');
+  const top = (owner && scopes.includes(owner) ? owner : undefined) ?? scopes[scopes.length - 1];
   return top ? top.api.context.with(top.ctx, fn) : fn();
 }
 
@@ -487,6 +522,11 @@ export function liveSpans(
      * automatic run scope). Without this a hand-closed handle bumps the process-wide counter, which
      * would make a second concurrent run believe a scope was already open. */
     _callerOwnsDepth?: boolean;
+    /** @internal Learn the run family ONLY from an event emitted inside this scope's own async
+     * context — the automatic path, which is context-bound by construction. A hand-closed
+     * `liveSpans()` handle keeps the historical "first event wins", because a user may legitimately
+     * open it around work that runs on another thread / worker where no context reaches. */
+    _ownContextOnly?: boolean;
   } = {},
 ): { close(): void } {
   const r = resolve(opts.tracer);
@@ -505,6 +545,7 @@ export function liveSpans(
   // (real API only; an injected fake tracer models no context, so it never activates — unchanged).
   const scope = api ? { api, ctx } : null;
   if (scope) pushScope(scope);
+  const owner: FamilyOwner = { token: {}, scope };
   let stepNo = 0;
   let totalInput = 0;
   let totalOutput = 0;
@@ -518,8 +559,17 @@ export function liveSpans(
     // (orchestration segments are `${parent}:${agent}#${seg}`; a single-agent run is the bare
     // runId). Matches makeCollector.match + the monitor's run_id normalization. Returns false for a
     // foreign run (GLR-3 — a concurrent run sharing the process bus must not pollute this one).
-    if (!runIdSet && traceId) {
-      family = traceId.includes(':') ? traceId.slice(0, traceId.indexOf(':')) : traceId;
+    if (!traceId) return false; // not attributable to any run — the flat emitter renders it
+    if (!runIdSet) {
+      // `bus.emit` is a process-wide fanout, so the first event this scope sees can belong to a
+      // DIFFERENT concurrent run. Learning it anyway is what made two overlapping zero-code runs
+      // render one run twice, lose the other, and stamp both roots with one run id. The automatic
+      // scope therefore learns only from its own async context, and a family has exactly one owner.
+      if (opts._ownContextOnly === true && scope !== null && !currentScopes().includes(scope)) {
+        return false; // emitted outside this scope — it belongs to another run
+      }
+      if (!claimFamily(familyOf(traceId), owner)) return false;
+      family = familyOf(traceId);
       root.setAttribute('cendor.run.id', family);
       root.setAttribute('cendor.trace_id', family);
       runIdSet = true;
@@ -551,7 +601,9 @@ export function liveSpans(
       return;
     }
     if (!(event instanceof LLMCall || event instanceof ToolCall)) return;
-    const traceId = event.traceId ?? '';
+    // The stamped trace id, else the ambient run scope (same fallback as `domainSpan` — `bus.emit` is
+    // a synchronous fanout, so the emitting call's `trace()` scope is still active).
+    const traceId = event.traceId || currentTraceId() || '';
     if (!learnAndFilter(traceId)) return;
     if (!convSet) {
       // G19: prefer the conversation id stamped on the event at construction (GLR-2 — survives an
@@ -619,6 +671,7 @@ export function liveSpans(
     close() {
       bus.unsubscribe(sub);
       if (scope) removeScope(scope); // by identity — safe under nesting / out-of-order close
+      releaseFamily(family, owner); // the run is over — a later scope may own this family again
       if (ownsDepth) coreOtel.exitLiveSpans();
       // Usage/cost rollups on the root at close — parity with spanTree's finished totals.
       root.setAttribute('gen_ai.usage.input_tokens', totalInput);
@@ -643,10 +696,27 @@ export function liveSpans(
  * The conversation id comes from the run's `session` — the id the user chose. No label is invented:
  * `cendor.run.label` is a human-authored tag, and inventing one would be identity Cendor does not own.
  *
- * @internal called by the runner/orchestration around each run body.
+ * Prefer {@link withAutoRunScope} / {@link autoScopeStream}: they bind the scope to the run body's own
+ * async context. This bare form gets the **manual** semantics (a hand-closed handle, visible
+ * process-wide) because a bare handle has no body to bind to.
+ *
+ * @internal
  */
 export function autoRunScope(session?: { id?: string | null } | null): { close(): void } | null {
-  return openAutoScope(session)?.handle ?? null;
+  if (!scopeIsAvailable(session)) return null;
+  return liveSpans(session?.id ? { conversationId: session.id } : {});
+}
+
+/** The three predicates that decide whether the SDK may open a scope of its own. Never throws — an
+ * older `@cendor/core` must not break a run. */
+function scopeIsAvailable(_session?: { id?: string | null } | null): boolean {
+  try {
+    if (coreOtel.telemetryMode() === 'off') return false;
+    if (coreOtel.liveSpansActive()) return false;
+    return coreOtel.providerConfigured();
+  } catch {
+    return false;
+  }
 }
 
 /** Open the automatic scope and hand back BOTH its close handle and its registry entry, so the caller
@@ -654,16 +724,11 @@ export function autoRunScope(session?: { id?: string | null } | null): { close()
 function openAutoScope(
   session?: { id?: string | null } | null,
 ): { handle: { close(): void }; scope: LiveScope | null } | null {
-  try {
-    if (coreOtel.telemetryMode() === 'off') return null;
-    if (coreOtel.liveSpansActive()) return null;
-    if (!coreOtel.providerConfigured()) return null;
-  } catch {
-    return null; // telemetry must never break a run (e.g. an older @cendor/core)
-  }
+  if (!scopeIsAvailable(session)) return null;
   const handle = liveSpans({
     ...(session?.id ? { conversationId: session.id } : {}),
     _callerOwnsDepth: true, // withAutoRunScope / autoScopeStream raise the depth for the run body only
+    _ownContextOnly: true, // …and bind the scope to it, so a concurrent run is never adopted
   });
   // `liveSpans` pushed its registry entry onto the module array (the manual semantics); take it off
   // and let the caller scope it instead. `lastPushedScope` is set by `liveSpans` in the same tick.
@@ -700,8 +765,8 @@ export async function withAutoRunScope<T>(
   );
 }
 
-/** Wrap a stream generator so its automatic scope opens **inside** the generator's own isolated
- * store and closes when the stream ends or is abandoned. */
+/** Wrap a stream generator so its automatic scope is bound to the STREAM's own async context and
+ * closes when the stream ends or is abandoned. */
 export function autoScopeStream<T>(
   session: { id?: string | null } | null | undefined,
   inner: () => AsyncGenerator<T>,
@@ -713,15 +778,24 @@ export function autoScopeStream<T>(
       return;
     }
     const { handle, scope } = opened;
-    // A generator is resumed in the CONSUMER's context, so the depth cannot be bound with a `run()`
-    // around the whole stream: it rides the module counter for the stream's lifetime (the
-    // manual-handle semantics — process-wide while open) and is released in the `finally`, which also
-    // runs when the consumer abandons the stream with `break`.
-    coreOtel.enterLiveSpans();
+    // An async generator's body is resumed in the CONSUMER's context, so wrapping the *creation* of
+    // `inner()` in `AsyncLocalStorage.run` binds nothing (measured: the store is invisible inside the
+    // body). Drive it by hand instead and enter the store around each RESUMPTION: the body — and the
+    // producer task it starts, which inherits the context it was created in — then sees both the core
+    // latch and the scope registry, while the consumer between deltas sees neither. That keeps the
+    // stream path scoped exactly like `withAutoRunScope` (and like Python's copied context), instead
+    // of standing the flat emitter down process-wide for the stream's whole lifetime.
+    const it = inner()[Symbol.asyncIterator]();
     try {
-      yield* withScope(scope, () => inner());
+      while (true) {
+        const step = await withLiveDepth(() => withScope(scope, () => it.next()));
+        if (step.done) return;
+        yield step.value;
+      }
     } finally {
-      coreOtel.exitLiveSpans();
+      // Abandonment (`break`) lands here: close the inner generator inside the scope so its own
+      // `finally` blocks (trace/audit/collector unwinding) run where they were opened.
+      await withLiveDepth(() => withScope(scope, () => it.return?.(undefined as never)));
       handle.close();
     }
   })();
