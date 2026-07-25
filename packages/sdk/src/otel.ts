@@ -296,14 +296,40 @@ function toolBlockedAttrs(ev: ToolGate): DomainSpan {
   return [`execute_tool ${ev.name}`, attrs];
 }
 
+/**
+ * Option C (DR-2c): an enforcement event as a `governance.*` child of the run root.
+ *
+ * Core owns the vocabulary (`cendor.gov.*`) and the rule-6 posture — no `audit.*` names, no `reason`
+ * strings (a guardrail's reason can carry input-derived text; see core's Option C note). The SDK only
+ * re-uses it so the same decision lands **inside the run** rather than beside it. Returns `null` when
+ * the event isn't an enforcement event, or when an audit mirror already owns the wire.
+ */
+function governanceAttrs(ev: any): DomainSpan | null {
+  const core = coreOtel as unknown as {
+    _govAttrs?: (e: unknown) => [string, Record<string, unknown>] | null;
+    governanceMirrorActive?: () => boolean;
+  };
+  if (!core._govAttrs || core.governanceMirrorActive?.() === true) return null;
+  const mapped = core._govAttrs(ev);
+  if (mapped === null || mapped === undefined) return null;
+  const [name, attrs] = mapped;
+  const kept: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(attrs)) if (v !== null && v !== undefined) kept[k] = v;
+  return [name, kept];
+}
+
 // biome ignores: `noExplicitAny` is off in this config; builders accept a library or an SDK event.
-const DOMAIN_BUILDERS: Record<string, (ev: any) => DomainSpan> = {
+const DOMAIN_BUILDERS: Record<string, (ev: any) => DomainSpan | null> = {
   AssemblyReport: ragAssembleAttrs,
   CompressionEvent: ragCompressAttrs,
   MemoryOp: memoryAttrs,
   CheckpointEvent: checkpointAttrs,
   OrchestrationEdge: handoffAttrs,
   ToolGate: toolBlockedAttrs,
+  // Option C: enforcement decisions as run children (core renders the same two events flat for a
+  // libs-only app). Duck-typed by class name, like every other row here.
+  BudgetEvent: governanceAttrs,
+  GuardrailDecision: governanceAttrs,
 };
 
 /** S9: contiguous groups of steps by agent, preserving order — parity with Python `_group_by_agent`. */
@@ -474,12 +500,14 @@ export function liveSpans(
   // E-wave: render a domain event (RAG/memory/orchestration/checkpoint/blocked-tool) as a
   // `cendor.sdk` child span. AssemblyReport carries no traceId — read the ambient run scope
   // (bus.emit is a synchronous same-thread fanout, so the emitting call's trace() scope is active).
-  const domainSpan = (event: any, builder: (e: any) => DomainSpan): void => {
+  const domainSpan = (event: any, builder: (e: any) => DomainSpan | null): void => {
     // SDK events carry camelCase `traceId`; squeeze's CompressionEvent carries snake_case
     // `trace_id`; contextkit's AssemblyReport carries neither → read the ambient run scope.
     const traceId = ((event?.traceId ?? event?.trace_id) as string) || currentTraceId() || '';
     if (!learnAndFilter(traceId)) return;
-    const [name, attrs] = builder(event);
+    const mapped = builder(event);
+    if (mapped === null) return; // Option C stood down (an audit mirror owns the wire)
+    const [name, attrs] = mapped;
     const now = Date.now();
     const span = tr.startSpan(name, { startTime: now }, ctx);
     span.setAttribute('cendor.trace_id', traceId);
