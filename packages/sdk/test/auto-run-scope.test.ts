@@ -302,4 +302,45 @@ describe('the automatic run scope', () => {
       audits.filter((a) => a.spanContext().traceId === root.spanContext().traceId).length,
     ).toBeGreaterThan(0);
   });
+
+  // ----------------------------------------- governance precedence, under CONCURRENCY (report §4.5)
+  // The wave proved "the mirror wins" sequentially only. These pin it with two runs in flight: each
+  // enforcement decision must be rendered EXACTLY ONCE — never twice (mirror + ops span), never zero.
+  async function budgeted(agent: Agent, audit: AuditLog | undefined): Promise<void> {
+    const { withBudget } = await import('@cendor/tokenguard');
+    await withBudget({ usd: 0.0000001, onExceed: 'block', name: 'tiny' }, async () => {
+      await run(agent, 'hi', audit ? { audit } : {});
+    }).catch(() => {
+      /* the block is the point */
+    });
+  }
+
+  it('two concurrent runs, one AuditLog: each decision is rendered once', async () => {
+    const audit = new AuditLog('support');
+    try {
+      await Promise.all([
+        budgeted(slowAgent('gpt-4o-mini', 'a', 30), audit),
+        budgeted(slowAgent('gpt-4.1-mini', 'b', 10), undefined),
+      ]);
+    } finally {
+      audit.detach();
+    }
+    // An AuditLog auto-populates from the whole process bus, so BOTH decisions ride the chain — and
+    // core's Option C spans stand down for both, so neither is rendered twice.
+    const n = names();
+    expect(n.filter((x) => x === 'agent.run')).toHaveLength(2);
+    expect(n.filter((x) => x === 'audit.budget_event')).toHaveLength(2);
+    expect(n.filter((x) => x.startsWith('governance.'))).toEqual([]);
+  });
+
+  it('two concurrent runs, no AuditLog: Option C renders each once', async () => {
+    await Promise.all([
+      budgeted(slowAgent('gpt-4o-mini', 'a', 30), undefined),
+      budgeted(slowAgent('gpt-4.1-mini', 'b', 10), undefined),
+    ]);
+    const n = names();
+    expect(n.filter((x) => x === 'agent.run')).toHaveLength(2);
+    expect(n.filter((x) => x === 'governance.budget_event')).toHaveLength(2);
+    expect(n.filter((x) => x.startsWith('audit.'))).toEqual([]);
+  });
 });

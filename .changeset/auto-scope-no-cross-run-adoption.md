@@ -35,5 +35,8 @@ Three defects, all in the newly-default automatic path:
 entry had been removed, so nothing could nest under its root; it now returns a plain `liveSpans()`
 handle with the manual semantics its docstring describes.
 
-4 regression tests, each verified failing against 0.23.1. 242 tests, `tsc` + biome clean,
-`check:docs` 206 snippets.
+4 regression tests, each verified failing against 0.23.1, plus two that pin governance precedence
+**under concurrency** (the wave only ever probed it sequentially): with one `AuditLog` across two
+overlapping runs both decisions ride the chain as `audit.budget_event` and Option C stands down for
+both; with no `AuditLog` each run gets exactly one `governance.budget_event`. Never twice, never zero.
+244 tests, `tsc` + biome clean, `check:docs` 206 snippets.
