@@ -75,24 +75,43 @@ const scopeStore = (() => {
 let scopesFallback: LiveScope[] = [];
 
 function currentScopes(): LiveScope[] {
-  return scopeStore ? (scopeStore.getStore() ?? []) : scopesFallback;
+  // Manual scopes (module array) plus any automatic scope active in this async context.
+  return [...scopesFallback, ...(scopeStore?.getStore() ?? [])];
 }
+// A manual `liveSpans()` handle is closed by hand, so it has no scope to bind to: it pushes onto the
+// module array and `withLiveRootActive` sees it process-wide (the historical behaviour). The SDK's
+// AUTOMATIC run scope instead runs the whole run body inside `scopeStore.run([...])`, which is
+// correctly scoped on every supported Node — `enterWith` is NOT (measured on node 20.20 / 22.23: it
+// leaks into concurrent flows and is not restored on exit; see @cendor/core's latch comment).
+/** The registry entry `liveSpans()` pushed most recently — read by `openAutoScope`, which re-binds it
+ * to the run body instead of leaving it process-wide. */
+let lastPushedScope: LiveScope | null = null;
+
 function pushScope(scope: LiveScope): void {
-  const next = [...currentScopes(), scope];
-  if (scopeStore) scopeStore.enterWith(next);
-  else scopesFallback = next;
+  scopesFallback = [...scopesFallback, scope];
+  lastPushedScope = scope;
 }
 function removeScope(scope: LiveScope): void {
-  const next = currentScopes().filter((s) => s !== scope);
-  if (scopeStore) scopeStore.enterWith(next);
-  else scopesFallback = next;
+  scopesFallback = scopesFallback.filter((s) => s !== scope);
 }
 
-/** Run `fn` with the scope stack isolated, so a scope opened inside cannot leak into the caller's
- * context (the counterpart of `@cendor/core`'s `_isolateLiveSpans` — see its comment for why). */
-function isolateScopes<T>(fn: () => T): T {
-  if (!scopeStore) return fn();
-  return scopeStore.run([...currentScopes()], fn);
+/** Raise the core live-spans depth for `fn` only (core's `AsyncLocalStorage.run`-based primitive).
+ * Falls back to the enter/exit pair when running against a core that predates it. */
+function withLiveDepth<T>(fn: () => T): T {
+  const core = coreOtel as unknown as { _withLiveSpansDepth?: <R>(f: () => R) => R };
+  if (typeof core._withLiveSpansDepth === 'function') return core._withLiveSpansDepth(fn);
+  coreOtel.enterLiveSpans();
+  try {
+    return fn();
+  } finally {
+    coreOtel.exitLiveSpans();
+  }
+}
+
+/** Run `fn` with `scope` on the stack for `fn` and everything it starts — and nothing else. */
+function withScope<T>(scope: LiveScope | null, fn: () => T): T {
+  if (!scopeStore || scope === null) return fn();
+  return scopeStore.run([...currentScopes(), scope], fn);
 }
 
 /**
@@ -459,12 +478,22 @@ export function spanTree(
  * ```
  */
 export function liveSpans(
-  opts: { tracer?: Tracer | null; name?: string; conversationId?: string; label?: string } = {},
+  opts: {
+    tracer?: Tracer | null;
+    name?: string;
+    conversationId?: string;
+    label?: string;
+    /** @internal The caller raises + releases the core latch itself, scoped to its own run body (the
+     * automatic run scope). Without this a hand-closed handle bumps the process-wide counter, which
+     * would make a second concurrent run believe a scope was already open. */
+    _callerOwnsDepth?: boolean;
+  } = {},
 ): { close(): void } {
   const r = resolve(opts.tracer);
   if (!r) return { close() {} };
   const { tr, api } = r;
-  coreOtel.enterLiveSpans(); // G20: the core bus→span emitter stands down while we own the spans
+  const ownsDepth = opts._callerOwnsDepth !== true;
+  if (ownsDepth) coreOtel.enterLiveSpans(); // G20: the emitter stands down while we own the spans
   const root = tr.startSpan(opts.name ?? 'agent.run');
   // Parity with `spanTree` and the Python `live_spans` root (a backend that groups by
   // gen_ai.operation.name — and Cendor Monitor's door router — reads this, not just the span name).
@@ -590,7 +619,7 @@ export function liveSpans(
     close() {
       bus.unsubscribe(sub);
       if (scope) removeScope(scope); // by identity — safe under nesting / out-of-order close
-      coreOtel.exitLiveSpans();
+      if (ownsDepth) coreOtel.exitLiveSpans();
       // Usage/cost rollups on the root at close — parity with spanTree's finished totals.
       root.setAttribute('gen_ai.usage.input_tokens', totalInput);
       root.setAttribute('gen_ai.usage.output_tokens', totalOutput);
@@ -617,6 +646,14 @@ export function liveSpans(
  * @internal called by the runner/orchestration around each run body.
  */
 export function autoRunScope(session?: { id?: string | null } | null): { close(): void } | null {
+  return openAutoScope(session)?.handle ?? null;
+}
+
+/** Open the automatic scope and hand back BOTH its close handle and its registry entry, so the caller
+ * can bind that entry to `fn` alone (see {@link withAutoRunScope}). `null` ⇒ nothing was opened. */
+function openAutoScope(
+  session?: { id?: string | null } | null,
+): { handle: { close(): void }; scope: LiveScope | null } | null {
   try {
     if (coreOtel.telemetryMode() === 'off') return null;
     if (coreOtel.liveSpansActive()) return null;
@@ -624,7 +661,15 @@ export function autoRunScope(session?: { id?: string | null } | null): { close()
   } catch {
     return null; // telemetry must never break a run (e.g. an older @cendor/core)
   }
-  return liveSpans(session?.id ? { conversationId: session.id } : {});
+  const handle = liveSpans({
+    ...(session?.id ? { conversationId: session.id } : {}),
+    _callerOwnsDepth: true, // withAutoRunScope / autoScopeStream raise the depth for the run body only
+  });
+  // `liveSpans` pushed its registry entry onto the module array (the manual semantics); take it off
+  // and let the caller scope it instead. `lastPushedScope` is set by `liveSpans` in the same tick.
+  const scope = lastPushedScope;
+  if (scope) removeScope(scope);
+  return { handle, scope };
 }
 
 /**
@@ -639,14 +684,17 @@ export async function withAutoRunScope<T>(
   session: { id?: string | null } | null | undefined,
   fn: () => Promise<T>,
 ): Promise<T> {
-  return coreOtel._isolateLiveSpans(() =>
-    isolateScopes(async () => {
-      const scope = autoRunScope(session);
-      if (scope === null) return fn();
+  const opened = openAutoScope(session);
+  if (opened === null) return fn();
+  const { handle, scope } = opened;
+  // The depth AND the scope stack are raised only for `fn` (AsyncLocalStorage.run — correct on every
+  // supported Node), so a concurrent run never loses its flat spans and nothing survives the run.
+  return withLiveDepth(() =>
+    withScope(scope, async () => {
       try {
         return await fn();
       } finally {
-        scope.close();
+        handle.close();
       }
     }),
   );
@@ -659,16 +707,22 @@ export function autoScopeStream<T>(
   inner: () => AsyncGenerator<T>,
 ): AsyncGenerator<T> {
   return (async function* () {
-    // The `await` FIRST is load-bearing: a generator body's first resumption runs in the CONSUMER's
-    // async context, so opening the scope before it would bind the consumer (leaving their context
-    // latched after the stream ends — the P1 defect class). One microtask later the body owns its own
-    // context: the producer it starts inherits the scope, and the consumer never sees it.
-    await Promise.resolve();
-    const scope = autoRunScope(session);
-    try {
+    const opened = openAutoScope(session);
+    if (opened === null) {
       yield* inner();
+      return;
+    }
+    const { handle, scope } = opened;
+    // A generator is resumed in the CONSUMER's context, so the depth cannot be bound with a `run()`
+    // around the whole stream: it rides the module counter for the stream's lifetime (the
+    // manual-handle semantics — process-wide while open) and is released in the `finally`, which also
+    // runs when the consumer abandons the stream with `break`.
+    coreOtel.enterLiveSpans();
+    try {
+      yield* withScope(scope, () => inner());
     } finally {
-      scope?.close();
+      coreOtel.exitLiveSpans();
+      handle.close();
     }
   })();
 }
