@@ -13,7 +13,7 @@ import {
   type ToolGate,
   toolSource,
 } from './_telemetry.js';
-import { currentAgent, currentConversation } from './governance.js';
+import { currentAgent, currentAgentId, currentConversation } from './governance.js';
 import type { Result, Step } from './types.js';
 
 const require = createRequire(import.meta.url);
@@ -411,8 +411,18 @@ function groupByAgent(steps: readonly Step[]): Array<[string, Step[]]> {
   return groups;
 }
 
+/** The agent id recorded on a step's call, or `''`. */
+function agentIdOfStep(step: Step): string {
+  const aid = (step.call as { metadata?: Record<string, unknown> } | undefined)?.metadata?.agent_id;
+  return typeof aid === 'string' ? aid : '';
+}
+
 function stepAttrs(span: Span, step: Step, stepNo: number): void {
   span.setAttribute('gen_ai.agent.name', step.agent);
+  // W4: post-hoc, the Result is all there is — the id rode in on the call's metadata (stamped by the
+  // ambient provider at construction). Omitted when unknown; never invented.
+  const sid = agentIdOfStep(step);
+  if (sid) span.setAttribute('gen_ai.agent.id', sid);
   span.setAttribute('cendor.step', stepNo); // 1-based ordinal across the run (G13)
   if (step.call instanceof LLMCall) {
     span.setAttribute('gen_ai.operation.name', 'chat');
@@ -476,6 +486,8 @@ export function spanTree(
     const agentSpan = tr.startSpan(`agent ${agentName}`, undefined, rootCtx);
     agentSpan.setAttribute('gen_ai.operation.name', 'invoke_agent');
     agentSpan.setAttribute('gen_ai.agent.name', agentName);
+    const segmentAgentId = group.map(agentIdOfStep).find(Boolean);
+    if (segmentAgentId) agentSpan.setAttribute('gen_ai.agent.id', segmentAgentId);
     const ctx = childContext(api, agentSpan); // nest this agent's call spans under its segment span
     for (const step of group) {
       stepNo += 1;
@@ -634,6 +646,9 @@ export function liveSpans(
     // Agent name: the ambient current agent, falling back to the event's stamped metadata.
     const meta = (event as { metadata?: Record<string, unknown> }).metadata;
     const agent = currentAgent() || (typeof meta?.agent === 'string' ? meta.agent : '');
+    // W4/S4: the agent's stable id, when the app gave it one. Emitted ONLY when known — never hashed,
+    // never placeholdered (D3). A name is a label; an id is identity.
+    const agentId = currentAgentId() || (typeof meta?.agent_id === 'string' ? meta.agent_id : '');
     if (agent) agentsSeen.add(agent); // G-V4-2: collect participants for the root
     // S8: backdate the child's start by the call's latency so its duration is accurate (parity with
     // Python live_spans + core's own emitter, which both pass start_time/end_time).
@@ -647,6 +662,7 @@ export function liveSpans(
     span.setAttribute('cendor.trace_id', traceId);
     span.setAttribute('cendor.step', stepNo);
     if (agent) span.setAttribute('gen_ai.agent.name', agent);
+    if (agentId) span.setAttribute('gen_ai.agent.id', agentId);
     if (event instanceof LLMCall) {
       span.setAttribute('gen_ai.operation.name', 'chat');
       span.setAttribute('gen_ai.request.model', event.model);

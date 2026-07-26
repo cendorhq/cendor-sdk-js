@@ -116,13 +116,17 @@ export function withScope<T>(agent: Agent, fn: () => Promise<T>): Promise<T> {
   // The agent currently executing a turn, read by `otel.liveSpans` to stamp `gen_ai.agent.name` on
   // each child span at emit time — robust regardless of bus fan-out order (the event is emitted
   // synchronously inside this scope; AsyncLocalStorage propagates across the awaits in `fn`).
-  return activeAgent.run(agent.name, () =>
+  const body = (): Promise<T> =>
     track({ agent: agent.name }, () => {
       if (agent.maxUsd != null) {
         return withBudgetBlock(agent.name, agent.maxUsd, fn);
       }
       return fn();
-    }),
+    });
+  return activeAgent.run(agent.name, () =>
+    // Only when the app gave the agent an id. Absent ⇒ the attribute is omitted downstream, not
+    // hashed and not placeholdered (§6.1 / D3): Cendor invents no identity.
+    agent.id ? activeAgentId.run(String(agent.id), body) : body(),
   );
 }
 
@@ -131,6 +135,18 @@ const activeAgent = new AsyncLocalStorage<string>();
 /** The name of the agent currently executing a turn, or `''` outside a run. */
 export function currentAgent(): string {
   return activeAgent.getStore() ?? '';
+}
+
+/** The **id** of that agent, when the app gave it one (`new Agent({ id })`) — the semconv sibling of
+ * `gen_ai.agent.name`. `''` when unknown, and **never invented**: a name is a label (two apps can
+ * share one, and a rename loses history) while an id is identity, and Cendor has no business
+ * manufacturing identity it was not given. Frameworks that own a real id (Foundry's `agentId`,
+ * Bedrock's `agentId`, an OpenAI `assistant_id`) supply it through their adapter. */
+const activeAgentId = new AsyncLocalStorage<string>();
+
+/** The id of the agent currently executing a turn, or `''` when unknown / outside a run. */
+export function currentAgentId(): string {
+  return activeAgentId.getStore() ?? '';
 }
 
 const activeConversation = new AsyncLocalStorage<string>();
@@ -157,6 +173,8 @@ addAmbientProvider((_event) => {
   const out: Record<string, unknown> = {};
   const agent = currentAgent();
   if (agent) out.agent = agent;
+  const agentId = currentAgentId();
+  if (agentId) out.agent_id = agentId;
   const conversation = currentConversation();
   if (conversation) out.conversation_id = conversation;
   return Object.keys(out).length > 0 ? out : undefined;

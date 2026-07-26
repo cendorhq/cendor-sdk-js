@@ -13,6 +13,14 @@ export type HandoffTarget = string | Agent | { target: string };
 export interface AgentOptions {
   name: string;
   model: string;
+  /**
+   * Optional **stable identity** for this agent, emitted as `gen_ai.agent.id`. A name is a label —
+   * two apps can share one, and renaming one loses its history — so pass an id when you have one
+   * (your own registry key, or the id a framework already owns: Foundry's `agentId`, Bedrock's
+   * `agentId`, an OpenAI `assistant_id`). When it is absent the attribute is simply **omitted**:
+   * Cendor never hashes or invents identity.
+   */
+  id?: string | null;
   instructions?: string;
   tools?: (Tool | ToolFn)[];
   provider?: string | null;
@@ -102,6 +110,8 @@ export interface AgentOptions {
 export class Agent {
   readonly name: string;
   readonly model: string;
+  /** Optional stable identity → `gen_ai.agent.id` (never invented). */
+  readonly id: string | null;
   readonly instructions: string;
   readonly tools: Tool[];
   readonly provider: string | null;
@@ -128,6 +138,7 @@ export class Agent {
   constructor(opts: AgentOptions) {
     this.name = opts.name;
     this.model = opts.model;
+    this.id = opts.id ?? null;
     this.instructions = opts.instructions ?? '';
     this.tools = (opts.tools ?? []).map(asTool);
     this.provider = opts.provider ?? null;
