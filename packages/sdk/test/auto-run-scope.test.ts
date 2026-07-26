@@ -343,4 +343,19 @@ describe('the automatic run scope', () => {
     expect(n.filter((x) => x === 'governance.budget_event')).toHaveLength(2);
     expect(n.filter((x) => x.startsWith('audit.'))).toEqual([]);
   });
+
+  it('gen_ai.usage.cost is a bare decimal — a backend parses it as a number', async () => {
+    await run(agentWith('hello'), 'hi');
+    const chat = exporter.getFinishedSpans().find((s) => s.name === 'chat gpt-4o')!;
+    const cost = chat.attributes['gen_ai.usage.cost'];
+    expect(cost, 'the chat span carried no cost').toBeDefined();
+    // Money.toString() renders "0.0000045 USD" — right for the hashed audit chain (both languages
+    // agree there), wrong for a span attribute a backend parses numerically. @cendor/sdk shipped the
+    // suffixed form up to 0.23.2 while @cendor/core and both Python paths shipped the bare decimal, so
+    // one run's cost parsed differently depending on which door emitted it.
+    expect(String(cost), `expected a bare decimal, got ${String(cost)}`).toMatch(/^-?\d+(\.\d+)?$/);
+    expect(Number.isFinite(Number(cost))).toBe(true);
+    const root = exporter.getFinishedSpans().find((s) => s.name === 'agent.run')!;
+    expect(String(root.attributes['cendor.run.cost_usd'])).toMatch(/^-?\d+(\.\d+)?$/);
+  });
 });

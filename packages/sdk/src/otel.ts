@@ -55,6 +55,20 @@ function childContext(api: OtelApi | null, root: Span): unknown {
 }
 
 /**
+ * The wire form of a money value: the **bare decimal**, never `Money.toString()`.
+ *
+ * `Money.toString()` renders `"0.0000045 USD"`. That is right for the audit chain (a human-readable,
+ * hashed evidence artifact, and both languages agree on it) and wrong for a span attribute, which a
+ * backend parses as a number: `Number("0.0000045 USD")` is `NaN`. Until `@cendor/sdk` 0.23.3 this door
+ * shipped the suffixed form while `@cendor/core` and both Python paths shipped the bare decimal — so
+ * the same run cost parsed differently depending on which door emitted it. Kept as a named helper so
+ * the next person reaches for the right one. Precision is preserved (decimal.js, never a float).
+ */
+function costAttr(cost: Money): string {
+  return cost.amount.toString();
+}
+
+/**
  * Open `liveSpans` scopes (innermost last), each holding the real OTel API + the run root's child
  * context. The runner uses the innermost to install the run root as the ACTIVE context span for the
  * run body — see {@link withLiveRootActive}.
@@ -410,7 +424,8 @@ function stepAttrs(span: Span, step: Step, stepNo: number): void {
         span.setAttribute('gen_ai.usage.reasoning_tokens', step.usage.reasoningTokens);
       }
     }
-    if (step.cost) span.setAttribute('gen_ai.usage.cost', step.cost.toString());
+    // `.amount`, never `Money.toString()` — see the note on `costAttr` below.
+    if (step.cost) span.setAttribute('gen_ai.usage.cost', costAttr(step.cost));
   } else if (step.call instanceof ToolCall) {
     span.setAttribute('gen_ai.operation.name', 'execute_tool');
     span.setAttribute('gen_ai.tool.name', step.name);
@@ -648,7 +663,7 @@ export function liveSpans(
         totalOutput += event.usage.outputTokens;
       }
       if (event.cost) {
-        span.setAttribute('gen_ai.usage.cost', event.cost.toString());
+        span.setAttribute('gen_ai.usage.cost', costAttr(event.cost));
         totalCost = totalCost.add(event.cost);
       }
       const ttft = event.metadata?.ttft_ms; // G-V4-1: TTFT inside a live governed journey
