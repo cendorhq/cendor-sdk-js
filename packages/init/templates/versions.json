@@ -10,7 +10,7 @@
     "@cendor/cassette": "0.3.6",
     "@cendor/acttrace": "0.13.0",
     "@cendor/libs": "0.2.23",
-    "@cendor/sdk": "0.23.2",
+    "@cendor/sdk": "0.23.3",
     "@cendor/mcp": "0.1.5",
     "@cendor/init": "0.2.2"
   },
