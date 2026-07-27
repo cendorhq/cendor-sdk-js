@@ -200,3 +200,92 @@ describe('doctor — telemetry', () => {
     expect(res.findings.some((f) => f.title.includes('OTelSink'))).toBe(true);
   });
 });
+
+// --------------------------------------------------------------- lockfile + --online (W2.4 / W4.2)
+// Twin of cendor-init's tests. Two properties, only one of which is about a feature:
+//   1. a LOCKFILE that pins @cendor/* low is named as the cause (a wide caret hides it entirely)
+//   2. runDoctor with no `live` argument makes ZERO network calls — the no-phone-home posture
+describe('lockfile + --online', () => {
+  function nodeProjectWithLock(lockedCore: string): void {
+    write(
+      'package.json',
+      JSON.stringify({ name: 'demo', dependencies: { '@cendor/core': '^0.1.0' } }),
+    );
+    write(
+      'package-lock.json',
+      JSON.stringify({
+        name: 'demo',
+        lockfileVersion: 3,
+        packages: { 'node_modules/@cendor/core': { version: lockedCore } },
+      }),
+    );
+  }
+
+  it('names package-lock.json when the LOCK is what is behind', () => {
+    // The declared caret is not the constraint here — the committed lock is, and `npm install`
+    // honours it. Cendor's own JS recipes were frozen exactly this way, green the whole time.
+    nodeProjectWithLock('0.1.0');
+    const titles = runDoctor(root)
+      .findings.filter((f) => f.severity === 'warn')
+      .map((f) => f.title);
+    expect(titles.some((t) => t.includes('package-lock.json'))).toBe(true);
+  });
+
+  it('says nothing when the lock is on the current shelf', () => {
+    nodeProjectWithLock(SNAPSHOT_CORE as string);
+    const titles = runDoctor(root)
+      .findings.filter((f) => f.severity === 'warn')
+      .map((f) => f.title);
+    expect(titles.some((t) => t.toLowerCase().includes('lock'))).toBe(false);
+  });
+
+  it('makes no network call without --online', async () => {
+    // Not "should not" — must not. Cendor's update posture is "we never check at runtime, and the
+    // tooling only checks when you ask"; a default that quietly fetched would make that false.
+    nodeProjectWithLock('0.1.0');
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (() => {
+      throw new Error('doctor fetched without --online');
+    }) as typeof fetch;
+    try {
+      expect(() => runDoctor(root)).not.toThrow();
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it('uses the live map when one is supplied, and degrades on an unreachable feed', () => {
+    write(
+      'package.json',
+      JSON.stringify({ name: 'demo', dependencies: { '@cendor/core': '0.1.0' } }),
+    );
+
+    // A live feed reporting a much newer core: the finding must quote IT, not the snapshot.
+    const live = runDoctor(root, { npm: { '@cendor/core': '99.0.0' }, asOf: '2099-01-01' });
+    const behind = live.findings.find((f) => f.title.includes('behind'));
+    expect(behind).toBeDefined();
+    expect((behind?.locations ?? []).join(' ')).toContain('99.0.0');
+    expect(behind?.detail).toContain('2099-01-01');
+
+    // An unreachable feed is INFO, not failure, and must not change the exit code.
+    const degraded = runDoctor(root, { npm: {}, error: 'could not reach the feed (test)' });
+    expect(
+      degraded.findings.some((f) => f.title.includes('Could not reach the live release feed')),
+    ).toBe(true);
+    expect(degraded.exitCode).toBe(runDoctor(root).exitCode);
+  });
+
+  it('npmMap flattens the real feed shape', async () => {
+    const { npmMap } = await import('../src/online.js');
+    const m = npmMap({
+      asOf: '2026-07-27',
+      libraries: [
+        { name: 'core', pypi: 'cendor-core', pypiVer: '1.14.1', npm: 'core', npmVer: '0.16.1' },
+      ],
+      sdk: [{ name: 'sdk', pypi: 'cendor-sdk', pypiVer: '1.20.0', npm: 'sdk', npmVer: '0.24.0' }],
+      // A future section this CLI does not know about must not break it.
+      devtooling: [],
+    });
+    expect(m).toEqual({ '@cendor/core': '0.16.1', '@cendor/sdk': '0.24.0' });
+  });
+});

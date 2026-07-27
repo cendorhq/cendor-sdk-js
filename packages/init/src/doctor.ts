@@ -14,6 +14,7 @@ import {
   detectProject,
   providersUsedInSource,
 } from './detect.js';
+import { RELEASES_URL } from './online.js';
 import { rel, walkSource } from './scan.js';
 import { versionsSnapshot } from './templates.js';
 import type { Finding, Severity } from './types.js';
@@ -194,32 +195,117 @@ function checkPyProviders(detected: Detected, src: SourceIndex, out: Finding[]):
   }
 }
 
-function checkNpmVersions(detected: Detected, out: Finding[]): void {
+/**
+ * Flag @cendor/* packages behind the latest release.
+ *
+ * `latest`/`asOf` come from the LIVE feed when `doctor --online` was asked for; with them omitted
+ * this reads the bundled snapshot and makes no network call at all (the default).
+ */
+function checkNpmVersions(
+  detected: Detected,
+  out: Finding[],
+  latest?: Record<string, string>,
+  asOf?: string,
+): void {
   const snap = versionsSnapshot();
+  const live = latest !== undefined;
+  const latestOf = latest ?? snap.npm;
+  const stamp = asOf || snap.asOf;
   const behind: string[] = [];
   // Installed versions are exact — compare directly. Declared-only ranges: warn only when the range
   // PROVABLY excludes latest (a caret on 0.x, a `<` bound, an exact pin) — never on an open `>=`.
   for (const [name, ver] of Object.entries(detected.installedNpm)) {
-    const latest = snap.npm[name];
+    const want = latestOf[name];
     const have = cleanVersion(ver);
-    if (latest && have && compareVersions(have, latest) < 0) {
-      behind.push(`${name} ${have} (installed) < ${latest}`);
+    if (want && have && compareVersions(have, want) < 0) {
+      behind.push(`${name} ${have} (installed) < ${want}`);
     }
   }
   for (const [name, spec] of Object.entries(detected.declaredNpm)) {
     if (name in detected.installedNpm) continue;
-    const latest = snap.npm[name];
-    if (latest && rangeBlocksLatest(spec, latest))
-      behind.push(`${name} "${spec}" excludes ${latest}`);
+    const want = latestOf[name];
+    if (want && rangeBlocksLatest(spec, want)) behind.push(`${name} "${spec}" excludes ${want}`);
   }
   if (behind.length > 0) {
+    const source = live
+      ? `the live feed at ${RELEASES_URL} (as of ${stamp})`
+      : `the bundled snapshot (as of ${stamp}). This is an offline hint — re-run with --online, or see /releases, for the canonical answer`;
     out.push({
       severity: 'warn',
       title: 'A Cendor package looks behind the latest release',
-      detail: `An installed or pinned version trails the bundled snapshot (as of ${snap.asOf}). Type Teach and fixes only arrive on upgrade. This is an offline hint — /releases is the source of truth.`,
+      detail: `An installed or pinned version trails ${source}. Type Teach and fixes only arrive on upgrade.`,
       fix: 'npm i @cendor/…@latest  (check https://cendor.ai/releases)',
       locations: behind,
     });
+  }
+}
+
+/** Lockfiles that pin a resolved version regardless of how wide the declared range is. */
+const LOCKFILES = ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock'] as const;
+
+/**
+ * Name the LOCKFILE when it is what is holding a project back.
+ *
+ * A wide declared range (`^0.16.0`) looks healthy while the lock beside it pins 0.16.0 and `npm
+ * install` honours it. Cendor's own cookbook JS recipes were frozen exactly this way — the caret was
+ * fine, the committed lock was the constraint, and CI stayed green throughout.
+ */
+function checkLockfile(root: string, out: Finding[]): void {
+  const snap = versionsSnapshot();
+  for (const lockName of LOCKFILES) {
+    const lock = join(root, lockName);
+    if (!existsSync(lock)) continue;
+
+    let text: string;
+    try {
+      text = readFileSync(lock, 'utf8');
+    } catch {
+      return;
+    }
+
+    const stale: string[] = [];
+    if (lockName === 'package-lock.json') {
+      // npm's lock is JSON: node_modules/@cendor/<x> -> { version }.
+      try {
+        const parsed = JSON.parse(text) as { packages?: Record<string, { version?: string }> };
+        for (const [path, entry] of Object.entries(parsed.packages ?? {})) {
+          const name = path.replace(/^.*node_modules\//, '');
+          if (!name.startsWith('@cendor/') || !entry?.version) continue;
+          const want = snap.npm[name];
+          const have = cleanVersion(entry.version);
+          if (want && have && compareVersions(have, want) < 0) {
+            stale.push(`${name} ${have} (locked in ${lockName}) < ${want}`);
+          }
+        }
+      } catch {
+        return; // an unparseable lock is not ours to diagnose
+      }
+    } else {
+      // pnpm/yarn: text scan for `@cendor/<x>@<version>` — no YAML dependency for a hint.
+      for (const m of text.matchAll(/(@cendor\/[a-z]+)[@:]\s*'?(\d+\.\d+\.\d+)/g)) {
+        const pkg = m[1];
+        const ver = m[2];
+        if (!pkg || !ver) continue; // noUncheckedIndexedAccess: a group can be undefined
+        const want = snap.npm[pkg];
+        const have = cleanVersion(ver);
+        if (want && have && compareVersions(have, want) < 0) {
+          const line = `${pkg} ${have} (locked in ${lockName}) < ${want}`;
+          if (!stale.includes(line)) stale.push(line);
+        }
+      }
+    }
+
+    if (stale.length > 0) {
+      out.push({
+        severity: 'warn',
+        title: `${lockName} pins Cendor below the latest release`,
+        detail:
+          'Your declared ranges may be perfectly wide — the LOCKFILE is what is holding these versions. Nothing will upgrade, and the build stays green, until you move the lock.',
+        fix: 'npm update   (then re-run your tests)',
+        locations: stale,
+      });
+    }
+    return; // one lockfile per project; the first found is the one in force
   }
 }
 
@@ -335,11 +421,35 @@ function checkTelemetry(root: string, detected: Detected, src: SourceIndex, out:
   }
 }
 
-export function runDoctor(root: string): DoctorResult {
+/** What a caller may hand in from the live feed. Absent ⇒ the offline snapshot, and no network. */
+export interface LiveVersions {
+  npm: Record<string, string>;
+  asOf?: string;
+  /** Set when `--online` was asked for but the feed could not be read; rendered as an info finding. */
+  error?: string;
+}
+
+/**
+ * Static-check a project's Cendor wiring.
+ *
+ * `live` is only ever populated by `doctor --online`. **With it omitted this makes no network call of
+ * any kind** — that is the contract, and a test asserts it. Cendor never checks for updates on its
+ * own; the tooling checks only when you ask.
+ */
+export function runDoctor(root: string, live?: LiveVersions): DoctorResult {
   const detected = detectProject(root);
   const src = indexSources(root);
   const u = usage(src);
   const findings: Finding[] = [];
+
+  if (live?.error) {
+    findings.push({
+      severity: 'info',
+      title: 'Could not reach the live release feed — using the bundled snapshot',
+      detail: `${live.error}. Version findings below compare against the snapshot baked into this CLI (as of ${versionsSnapshot().asOf}), which may be older than what is published.`,
+      fix: `Check ${RELEASES_URL} in a browser, or drop --online.`,
+    });
+  }
 
   // Universal checks (both file types).
   checkStrayInit(root, src, findings);
@@ -351,7 +461,8 @@ export function runDoctor(root: string): DoctorResult {
   // Native-ecosystem checks.
   if (detected.node) {
     checkNodeProviders(root, detected, src, findings);
-    checkNpmVersions(detected, findings);
+    checkNpmVersions(detected, findings, live?.error ? undefined : live?.npm, live?.asOf);
+    checkLockfile(root, findings);
     checkPriceSnapshot(root, detected, findings);
   }
   if (detected.python) {

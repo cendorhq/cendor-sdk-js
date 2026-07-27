@@ -1,31 +1,31 @@
 {
- "_comment": "Committed FALLBACK snapshot of published versions, mirroring the site /releases source of truth (cendor-site/src/pages/releases.astro) and cendor-mcp/data/versions.json. `doctor` reads this OFFLINE to decide whether an installed cendor/@cendor package is behind. It is only a hint — the live source of truth is https://cendor.ai/releases. Keep in sync after every release (see cendorhq root CLAUDE.md -> 'After EVERY release, sync all version/reference surfaces'). Versions are INDEPENDENT across languages; the parity matrix, not matching numbers, is the contract.",
- "asOf": "2026-07-27",
- "npm": {
-  "@cendor/core": "0.16.1",
-  "@cendor/tokenguard": "0.8.2",
-  "@cendor/guardrails": "0.7.10",
-  "@cendor/contextkit": "2.0.9",
-  "@cendor/squeeze": "0.3.9",
-  "@cendor/cassette": "0.3.7",
-  "@cendor/acttrace": "0.14.1",
-  "@cendor/libs": "0.2.24",
-  "@cendor/sdk": "0.24.0",
-  "@cendor/mcp": "0.1.5",
-  "@cendor/init": "0.2.2"
- },
- "pypi": {
-  "cendor-core": "1.14.1",
-  "cendor-tokenguard": "1.6.1",
-  "cendor-guardrails": "1.6.0",
-  "cendor-contextkit": "1.0.3",
-  "cendor-squeeze": "1.1.1",
-  "cendor-cassette": "1.1.0",
-  "cendor-acttrace": "1.13.1",
-  "cendor-libs": "1.2.0",
-  "cendor": "1.1.0",
-  "cendor-sdk": "1.20.0",
-  "cendor-mcp": "0.1.5",
-  "cendor-init": "0.2.2"
- }
+  "_comment": "GENERATED — do not hand-edit. Source: cendor-site/src/data/versions.json; regenerate with `node scripts/gen-version-mirrors.mjs` in cendor-site. `doctor` reads this OFFLINE to decide whether an installed cendor/@cendor package is behind. It is only a hint — the live source of truth is https://cendor.ai/releases.json (see `doctor --online`).",
+  "asOf": "2026-07-27",
+  "npm": {
+    "@cendor/core": "0.16.2",
+    "@cendor/tokenguard": "0.8.2",
+    "@cendor/guardrails": "0.7.10",
+    "@cendor/contextkit": "2.0.9",
+    "@cendor/squeeze": "0.3.9",
+    "@cendor/cassette": "0.3.7",
+    "@cendor/acttrace": "0.14.1",
+    "@cendor/libs": "0.2.24",
+    "@cendor/sdk": "0.24.0",
+    "@cendor/mcp": "0.1.5",
+    "@cendor/init": "0.2.2"
+  },
+  "pypi": {
+    "cendor-core": "1.14.2",
+    "cendor-tokenguard": "1.6.1",
+    "cendor-guardrails": "1.6.1",
+    "cendor-contextkit": "1.0.3",
+    "cendor-squeeze": "1.1.1",
+    "cendor-cassette": "1.1.1",
+    "cendor-acttrace": "1.13.1",
+    "cendor-libs": "1.2.0",
+    "cendor": "1.1.0",
+    "cendor-sdk": "1.20.0",
+    "cendor-mcp": "0.1.5",
+    "cendor-init": "0.2.2"
+  }
 }

@@ -11,7 +11,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { SEVERITY_RANK, runDoctor } from './doctor.js';
+import { type LiveVersions, SEVERITY_RANK, runDoctor } from './doctor.js';
 import { type InitOptions, runInit } from './init.js';
 import { ALL_ASSISTANTS, type Assistant, type Finding } from './types.js';
 
@@ -39,6 +39,11 @@ INIT OPTIONS
   --scaffold            also write a minimal correct instrument()+budget starter for this project
   --force               overwrite an owned file (.cursor/rules/cendor.mdc) even if not ours
   --dry-run             show what would change without writing anything
+
+DOCTOR OPTIONS
+  --online              check versions against https://cendor.ai/releases.json instead of the
+                        snapshot bundled in this CLI. Without it, doctor makes NO network call —
+                        Cendor never checks for updates on its own.
 
 COMMON
   -h, --help            show this help
@@ -145,12 +150,28 @@ function wrap(text: string, width: number): string[] {
   return lines;
 }
 
-function cmdDoctor(root: string): number {
-  const { findings, exitCode } = runDoctor(root);
+async function cmdDoctor(root: string, online: boolean): Promise<number> {
+  // OPT-IN network, and only here. `doctor` with no flag never fetches anything.
+  let live: LiveVersions | undefined;
+  if (online) {
+    const { fetchReleases, npmMap, OnlineLookupError } = await import('./online.js');
+    try {
+      const feed = await fetchReleases();
+      live = { npm: npmMap(feed), asOf: feed.asOf };
+    } catch (err) {
+      // Not reaching the internet is not a wiring problem — degrade to the snapshot and say so.
+      live = {
+        npm: {},
+        error: err instanceof OnlineLookupError ? err.message : String(err),
+      };
+    }
+  }
+
+  const { findings, exitCode } = runDoctor(root, live);
   const sorted = [...findings].sort(
     (a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity],
   );
-  process.stdout.write('\ncendor-init doctor\n\n');
+  process.stdout.write(`\ncendor-init doctor${online ? ' --online' : ''}\n\n`);
   for (const f of sorted) printFinding(f);
 
   const errors = findings.filter((f) => f.severity === 'error').length;
@@ -161,7 +182,7 @@ function cmdDoctor(root: string): number {
   return exitCode;
 }
 
-function main(): number {
+async function main(): Promise<number> {
   const { values, positionals } = parseArgs({
     args: process.argv.slice(2),
     allowPositionals: true,
@@ -174,6 +195,9 @@ function main(): number {
       scaffold: { type: 'boolean' },
       force: { type: 'boolean' },
       'dry-run': { type: 'boolean' },
+      // OPT-IN network for `doctor`. Without it there is no fetch at all — the no-phone-home default
+      // is the product position, not an implementation detail.
+      online: { type: 'boolean' },
     },
   });
 
@@ -201,11 +225,11 @@ function main(): number {
         dryRun: values['dry-run'],
       });
     case 'doctor':
-      return cmdDoctor(root);
+      return cmdDoctor(root, Boolean(values.online));
     default:
       process.stderr.write(`cendor-init: unknown command "${command}". Try --help.\n`);
       return 2;
   }
 }
 
-process.exit(main());
+process.exit(await main());
