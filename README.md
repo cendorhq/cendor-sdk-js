@@ -11,6 +11,13 @@ A thin, model-agnostic agent SDK where governance is the *foundation*, not a plu
 
 [![npm: @cendor/sdk](https://img.shields.io/npm/v/@cendor/sdk.svg?label=%40cendor%2Fsdk)](https://www.npmjs.com/package/@cendor/sdk) ![Node](https://img.shields.io/badge/node-%E2%89%A518-blue) ![License](https://img.shields.io/badge/license-Apache_2.0-blue) ![module: ESM](https://img.shields.io/badge/module-ESM-blue) ![types: TypeScript](https://img.shields.io/badge/types-TypeScript-blue) [![Biome](https://img.shields.io/badge/lint-biome-60a5fa)](https://biomejs.dev)
 
+<!-- cendor:downloads:start — self-hosted badges from cendor.ai (no third party in the render path).
+     The numbers live inside the SVGs, regenerated daily from the committed ledger, so this file
+     never goes stale. PyPI excludes index mirrors; npm publishes no mirror filter, which is why the
+     two are shown separately and never summed. Method: https://cendor.ai/downloads -->
+[![npm · @cendor/sdk](https://cendor.ai/badge/downloads/cendor-sdk-js.svg)](https://cendor.ai/downloads) [![all Cendor · npm](https://cendor.ai/badge/downloads/npm.svg)](https://cendor.ai/downloads) [![all Cendor · PyPI](https://cendor.ai/badge/downloads/pypi.svg)](https://cendor.ai/downloads)
+<!-- cendor:downloads:end -->
+
 [**Install**](#install) · [**Governed in 10 lines**](#a-governed-agent-in-10-lines) · [**Why different**](#why-its-different) · [**Providers**](#every-major-provider--one-canonical-loop) · [**Docs**](https://cendor.ai/docs/sdk/getting-started)
 
 *model-agnostic · ESM-only · local-first · offline by default*
