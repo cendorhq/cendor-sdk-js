@@ -20,7 +20,28 @@ export interface FoundryManifest {
   model: string;
 }
 
-/** Adapt a `@cendor/sdk` agent to the Bot Framework Activity protocol (custom-engine agent). */
+/**
+ * Adapt a `@cendor/sdk` agent to the Bot Framework Activity protocol (custom-engine agent).
+ *
+ * Use this when **cendor should BE the endpoint** — it owns the Activity request/reply shape, so you
+ * hand it inbound Activities and send back what it returns.
+ *
+ * ⚠️ **Not the Microsoft 365 Agents SDK path.** If your process already hosts `AgentApplication`
+ * behind `POST /api/messages`, it owns that plumbing (plus `TurnContext`/`TurnState`, streaming and
+ * auth) *and* holds the model client — so govern it with the libraries instead: `instrument()` plus
+ * budgets, gates and evidence, attaching the `channelData.cendor` envelope in your own handler in ~3
+ * lines. Constructing this adapter inside such a handler gives you **two Activity layers** and it will
+ * not throw, so nothing tells you. See
+ * https://cendor.ai/docs/providers#microsoft-365-agents-sdk-custom-engine-agent
+ *
+ * @example
+ * ```ts
+ * import { Agent, FoundryAdapter } from '@cendor/sdk';
+ *
+ * const adapter = new FoundryAdapter(new Agent({ name: 'assistant', model: 'gpt-4o', instructions: 'Help.' }));
+ * const reply = await adapter.onActivity({ type: 'message', text: 'hi', from: { id: 'user' } });
+ * ```
+ */
 export class FoundryAdapter {
   readonly agent: Agent;
   readonly audit: AuditLog | null;
