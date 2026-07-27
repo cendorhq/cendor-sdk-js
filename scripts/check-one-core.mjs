@@ -47,11 +47,24 @@ function findCopies(dir, found = [], seen = new Set()) {
   const direct = join(nm, ...PKG.split('/'), 'package.json');
   if (existsSync(direct)) record(direct, found, seen);
 
-  // pnpm's store: node_modules/.pnpm/@cendor+core@<ver>/node_modules/@cendor/core
+  // pnpm's store. Count only copies something actually LINKS TO — never a store root just because
+  // it exists on disk.
+  //
+  // The first version of this enumerated `.pnpm/@cendor+core@<ver>/` directly, and that produced a
+  // FALSE ALARM the first time it met a real major upgrade: `pnpm install` leaves the previous
+  // version's store directory behind, unreferenced, and the gate reported "2 versions installed"
+  // for a tree whose only live symlink pointed at 1.0.0. A gate that cries wolf gets ignored — and
+  // this one exists precisely to be believed when it fires.
+  //
+  // So: a store ROOT (`.pnpm/@cendor+core@X/node_modules/@cendor/core`) is the link TARGET, not a
+  // copy. What counts is a DEPENDENT's link (`.pnpm/<some-pkg>@Y/node_modules/@cendor/core`) — which
+  // is exactly how a genuine duplicate manifests, and which names the culprit package in the report
+  // instead of an anonymous store path. Realpath-deduping collapses many links to one real copy.
   const store = join(nm, '.pnpm');
   if (existsSync(store)) {
     for (const entry of readdirSync(store)) {
-      if (!entry.startsWith('@cendor+core@')) continue;
+      // Skip core's OWN store root — it is the target, and it survives an upgrade unreferenced.
+      if (entry.startsWith('@cendor+core@')) continue;
       const p = join(store, entry, 'node_modules', ...PKG.split('/'), 'package.json');
       if (existsSync(p)) record(p, found, seen);
     }

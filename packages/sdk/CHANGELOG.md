@@ -1,5 +1,30 @@
 # @cendor/sdk
 
+## 1.0.0
+
+### Major Changes
+
+- **1.0 — a stability declaration, not a breaking change.**
+
+  No API moved. Nothing was removed, renamed, or given a different shape. If your code compiles against
+  `0.24.x` it compiles against `1.0.0`. **There is no migration.**
+
+  This follows `@cendor/*` 1.0 in the libraries repo. Pre-1.0, a caret never crosses a minor, so the
+  SDK's pins on the libraries had to be bumped in lockstep on every library minor or the install
+  resolved a **second copy of `@cendor/core`** — a second event bus, after which a guardrail decision
+  never reaches the SDK and nothing fails to say so. At `1.x` a caret spans the whole major and the
+  coordination disappears.
+
+  Pins move to the 1.0 shelf: `@cendor/core` `^1.0.0`, `acttrace` `^1.0.0`, `cassette` `^1.0.0`,
+  `guardrails` `^1.0.0`, `squeeze` `^1.0.0`, `tokenguard` `^1.0.0`, and `contextkit` `^3.0.0` (it was
+  already past 1.0 from an earlier accidental major, so it continues forward rather than counting back).
+
+  A `^0.x` range will not pick this up on its own — a caret does not cross a major. That is deliberate.
+  Version numbers stay **independent across languages**: `cendor-sdk 1.20` (PyPI) and `@cendor/sdk 1.0`
+  (npm) are the same capability, and the [parity matrix](https://cendor.ai/docs/languages) is the
+  contract. The versioning and support policy is now written down at
+  https://cendor.ai/docs/languages#versioning-and-support.
+
 ## 0.24.0
 
 ### Minor Changes
