@@ -1,5 +1,26 @@
 # @cendor/sdk
 
+## 3.0.0
+
+### Major Changes
+
+- **Joins the shared major.** Every `@cendor/*` package now moves its major together — the SDK
+  included — so one number tells you a set is coherent: anything on major 3 works with anything else
+  on major 3. Minors and patches remain independent per package.
+
+  **No API changed in this release.** Nothing removed, renamed or reshaped; code that compiles today
+  compiles after upgrading, and there is no migration. Upgrade the set together:
+  `npm i @cendor/sdk@latest`.
+
+  Library pins move with it — `@cendor/core` `^3.0.0`, `acttrace` `^3.0.0`, `cassette` `^3.0.0`,
+  `guardrails` `^3.0.0`, `squeeze` `^3.0.0`, `tokenguard` `^3.0.0`, `contextkit` `^3.0.1` — so the
+  SDK and the libraries beneath it resolve exactly one `@cendor/core`, and therefore one event bus.
+
+  Policy: https://cendor.ai/docs/languages#versioning-and-support — a new capability is a **minor**,
+  deprecations warn in-band for at least two minors before removal, security fixes land on the
+  previous major for six months, majors are announced 30 days ahead. Versions stay **independent
+  across languages**; the parity matrix, not matching numbers, is the contract.
+
 ## 1.0.0
 
 ### Major Changes

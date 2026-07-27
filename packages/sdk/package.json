@@ -1,6 +1,6 @@
 {
   "name": "@cendor/sdk",
-  "version": "1.0.0",
+  "version": "3.0.0",
   "description": "Build an LLM agent with spending limits, a tamper-evident audit trail, PII redaction, and record/replay testing built in from the start — a governed agent in about 10 lines.",
   "type": "module",
   "license": "Apache-2.0",
@@ -24,13 +24,13 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@cendor/acttrace": "^1.0.0",
-    "@cendor/cassette": "^1.0.0",
-    "@cendor/contextkit": "^3.0.0",
-    "@cendor/core": "^1.0.0",
-    "@cendor/guardrails": "^1.0.0",
-    "@cendor/squeeze": "^1.0.0",
-    "@cendor/tokenguard": "^1.0.0",
+    "@cendor/acttrace": "^3.0.0",
+    "@cendor/cassette": "^3.0.0",
+    "@cendor/contextkit": "^3.0.1",
+    "@cendor/core": "^3.0.0",
+    "@cendor/guardrails": "^3.0.0",
+    "@cendor/squeeze": "^3.0.0",
+    "@cendor/tokenguard": "^3.0.0",
     "zod": "^4.0.0"
   },
   "optionalDependencies": {

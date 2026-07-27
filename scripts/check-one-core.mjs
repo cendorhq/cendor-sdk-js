@@ -34,7 +34,24 @@ const realOrNull = (p) => {
   }
 };
 
-/** Every installed copy of PKG under `dir`, as {version, path}. Walks node_modules trees only. */
+/** Every REACHABLE copy of PKG under `dir`, as {version, path}.
+ *
+ * REACHABILITY IS THE WHOLE ALGORITHM, and it took two false alarms to learn why.
+ *
+ * `pnpm install` does not prune its content-addressed store: after an upgrade,
+ * `.pnpm/@cendor+core@<old>/` and `.pnpm/@cendor+acttrace@<old>/` both remain on disk, unreferenced.
+ * Two earlier versions of this gate enumerated store directories and so counted those corpses as
+ * installed copies — it reported "2 versions of @cendor/core" for trees where the live graph held
+ * exactly one. A gate that cries wolf gets ignored, and this one exists to be believed when it fires.
+ *
+ * So we never enumerate the store. We walk the graph the runtime actually walks: start at the
+ * project's own `node_modules` (the links pnpm creates for DECLARED deps), follow each into whatever
+ * it resolves to, and recurse through that package's own `node_modules`. An orphan is unreachable by
+ * construction — nothing links to it — so it cannot be counted. A genuine duplicate stays visible,
+ * because a dependent still on the old shelf IS reachable, and the report names that dependent.
+ *
+ * This is also correct for npm, whose duplicates are real nested directories rather than links.
+ */
 function findCopies(dir, found = [], seen = new Set()) {
   const real = realOrNull(dir);
   if (!real || visited.has(real)) return found;
@@ -43,42 +60,20 @@ function findCopies(dir, found = [], seen = new Set()) {
   const nm = join(dir, 'node_modules');
   if (!existsSync(nm)) return found;
 
-  // Direct hit: node_modules/@cendor/core
+  // Is this package itself the one we're hunting?
   const direct = join(nm, ...PKG.split('/'), 'package.json');
   if (existsSync(direct)) record(direct, found, seen);
 
-  // pnpm's store. Count only copies something actually LINKS TO — never a store root just because
-  // it exists on disk.
-  //
-  // The first version of this enumerated `.pnpm/@cendor+core@<ver>/` directly, and that produced a
-  // FALSE ALARM the first time it met a real major upgrade: `pnpm install` leaves the previous
-  // version's store directory behind, unreferenced, and the gate reported "2 versions installed"
-  // for a tree whose only live symlink pointed at 1.0.0. A gate that cries wolf gets ignored — and
-  // this one exists precisely to be believed when it fires.
-  //
-  // So: a store ROOT (`.pnpm/@cendor+core@X/node_modules/@cendor/core`) is the link TARGET, not a
-  // copy. What counts is a DEPENDENT's link (`.pnpm/<some-pkg>@Y/node_modules/@cendor/core`) — which
-  // is exactly how a genuine duplicate manifests, and which names the culprit package in the report
-  // instead of an anonymous store path. Realpath-deduping collapses many links to one real copy.
-  const store = join(nm, '.pnpm');
-  if (existsSync(store)) {
-    for (const entry of readdirSync(store)) {
-      // Skip core's OWN store root — it is the target, and it survives an upgrade unreferenced.
-      if (entry.startsWith('@cendor+core@')) continue;
-      const p = join(store, entry, 'node_modules', ...PKG.split('/'), 'package.json');
-      if (existsSync(p)) record(p, found, seen);
-    }
-  }
-
-  // npm nests duplicates inside the dependent that needs them.
+  // Recurse into every DECLARED dependency link. `.pnpm` is skipped deliberately: it is the store,
+  // reached only by following a link into it, never by enumeration.
   for (const entry of readdirSync(nm)) {
-    if (entry === '.pnpm' || entry === '.bin') continue;
+    if (entry === '.pnpm' || entry === '.bin' || entry.startsWith('.')) continue;
     const child = join(nm, entry);
-    if (!safeIsDir(child)) continue;
+    if (!existsSync(child)) continue; // a broken link from a half-pruned tree
     if (entry.startsWith('@')) {
       for (const scoped of readdirSync(child)) {
         const p = join(child, scoped);
-        if (safeIsDir(p)) findCopies(p, found, seen);
+        if (existsSync(p)) findCopies(p, found, seen);
       }
     } else {
       findCopies(child, found, seen);
@@ -86,14 +81,6 @@ function findCopies(dir, found = [], seen = new Set()) {
   }
   return found;
 }
-
-const safeIsDir = (p) => {
-  try {
-    return statSync(p).isDirectory();
-  } catch {
-    return false;
-  }
-};
 
 function record(pkgJsonPath, found, seen) {
   // Dedupe on the REAL path so a workspace symlink and its target are not counted twice.
@@ -108,10 +95,26 @@ function record(pkgJsonPath, found, seen) {
   }
 }
 
+/** Seeds for one project: the root, plus every workspace package (whose deps live in their OWN
+ * node_modules and are not reachable from the root's). Missing `packages/` is fine — a plain app. */
+function seedsFor(root) {
+  const seeds = [root];
+  const pkgs = join(root, 'packages');
+  if (existsSync(pkgs)) {
+    for (const name of readdirSync(pkgs)) {
+      const p = join(pkgs, name);
+      if (existsSync(join(p, 'package.json'))) seeds.push(p);
+    }
+  }
+  return seeds;
+}
+
 let failed = false;
 for (const root of roots) {
   visited.clear(); // per-root, so two roots that overlap on disk are each walked fully
-  const copies = findCopies(root);
+  const copies = [];
+  const seen = new Set();
+  for (const seed of seedsFor(root)) findCopies(seed, copies, seen);
   const versions = [...new Set(copies.map((c) => c.version))].sort();
 
   if (versions.length === 0) {

@@ -21,7 +21,8 @@
     "changeset": "changeset",
     "version-packages": "changeset version",
     "release": "pnpm build && changeset publish",
-    "check:one-core": "node scripts/check-one-core.mjs ."
+    "check:one-core": "node scripts/check-one-core.mjs .",
+    "check:major": "node scripts/check-major-bump.mjs ."
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.112.3",
