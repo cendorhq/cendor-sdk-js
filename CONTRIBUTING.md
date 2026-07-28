@@ -99,8 +99,10 @@ compiles is worse than no example.
 - Conventional-ish commit messages (`feat:`, `fix:`, `docs:`, `chore:`), with a body explaining the
   reasoning.
 - Do **not** add a `Co-Authored-By` trailer.
-- Keep PRs green: CI runs lint, type checks, the one-core and major-bump gates, the test suite on
-  Node 20 and 22, and the docs-snippet typecheck on every push.
+- Keep PRs green: on every push CI runs lint, type checks, the one-core and major-bump gates, and the
+  test suite on Node 20 and 22. The docs-snippet job additionally needs read access to the two docs
+  repos, and self-skips when that isn't configured — so run `pnpm check:docs` locally rather than
+  assuming CI covered it.
 
 ## Reporting a security issue
 
