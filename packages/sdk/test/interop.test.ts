@@ -123,6 +123,50 @@ describe('@cendor/sdk — MCP client', () => {
     const resources = await loadMcpResources(session);
     expect(resources).toEqual({ 'file://a.txt': 'hello' });
   });
+
+  it('extracts a resource body from the MCP `contents[]` read shape', async () => {
+    // A resource *read* result is `{contents: [...]}` (MCP `ReadResourceResult`), NOT the
+    // `{content: [...]}` of a tool-call result. Feeding it to the tool-result extractor fell all the
+    // way through to `String(result)`, so every resource collapsed to "[object Object]".
+    const session: McpSession = {
+      async listTools() {
+        return { tools: [] };
+      },
+      async callTool() {
+        return {};
+      },
+      async listResources() {
+        return {
+          resources: [
+            { uri: 'file://a.txt' },
+            { uri: 'file://multi.txt' },
+            { uri: 'file://logo.png' },
+            { uri: 'file://empty' },
+          ],
+        };
+      },
+      async readResource(uri) {
+        if (uri === 'file://a.txt')
+          return { contents: [{ uri, mimeType: 'text/plain', text: 'hello from the resource' }] };
+        if (uri === 'file://multi.txt')
+          return {
+            contents: [
+              { uri, text: 'part one' },
+              { uri, text: 'part two' },
+            ],
+          };
+        if (uri === 'file://logo.png')
+          return { contents: [{ uri, mimeType: 'image/png', blob: 'QUJD' }] };
+        return { contents: [] };
+      },
+    };
+    const resources = await loadMcpResources(session);
+    expect(resources['file://a.txt']).toBe('hello from the resource');
+    expect(resources['file://multi.txt']).toBe('part one\npart two'); // every entry, joined
+    expect(resources['file://logo.png']).toBe(''); // a blob has no text — never base64 in a prompt
+    expect(resources['file://empty']).toBe('');
+    expect(JSON.stringify(resources)).not.toContain('[object Object]');
+  });
 });
 
 // --------------------------------------------------------------------------- A2A

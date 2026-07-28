@@ -50,6 +50,30 @@ function mcpResultText(result: unknown): string {
   return parts.length > 0 ? parts.join('\n') : String(content);
 }
 
+/**
+ * Extract text from an MCP `ReadResourceResult` — a *resource read* body rides `.contents`, not the
+ * `.content` of a tool-call result, so {@link mcpResultText} fell through to `String(result)` and
+ * every resource collapsed to `"[object Object]"`.
+ *
+ * `contents` is a list of `TextResourceContents` (`.text`) or `BlobResourceContents` (`.blob`, base64):
+ * every text entry is joined with `\n` (same as a multi-part tool result), an empty list is `''`, and a
+ * blob contributes nothing — this function's contract is the resource's *text*, and base64 bytes are
+ * not text a model should be handed. Falls back to the tool-result extractor for any other shape.
+ */
+function mcpResourceText(result: unknown): string {
+  const contents = get(result, 'contents');
+  if (!Array.isArray(contents)) return mcpResultText(result);
+  const parts: string[] = [];
+  for (const item of contents) {
+    if (typeof item === 'string') parts.push(item);
+    else {
+      const text = get(item, 'text');
+      if (text != null) parts.push(String(text));
+    }
+  }
+  return parts.join('\n');
+}
+
 /** Wrap one MCP tool spec as a governed async {@link Tool} (server schema used verbatim). */
 function wrapMcpTool(session: McpSession, spec: unknown, server = '', transport = ''): Tool {
   const name = (get(spec, 'name') as string) || 'tool';
@@ -144,7 +168,7 @@ export async function loadMcpResources(session: McpSession): Promise<Record<stri
     if (uri == null || typeof session.readResource !== 'function') continue;
     try {
       const contents = await session.readResource(String(uri));
-      out[String(uri)] = mcpResultText(contents);
+      out[String(uri)] = mcpResourceText(contents);
     } catch {
       // a single unreadable resource must not abort the batch
     }
