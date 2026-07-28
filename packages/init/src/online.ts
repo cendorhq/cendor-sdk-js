@@ -14,7 +14,7 @@
  * Source: https://cendor.ai/releases.json — a static, CORS-open feed rendered from the same data as
  * the human /releases page, so the two cannot disagree.
  *
- * Uses global `fetch` (Node 18+, which this package already requires) — no dependency added.
+ * Uses global `fetch` (built in since Node 18; this package requires Node >= 20) — no dependency added.
  */
 
 /**

@@ -9,7 +9,7 @@
 
 A thin, model-agnostic agent SDK where governance is the *foundation*, not a plugin. The TypeScript/JavaScript port of [`cendor-sdk`](https://github.com/cendorhq/cendor-sdk).
 
-[![npm: @cendor/sdk](https://img.shields.io/npm/v/@cendor/sdk.svg?label=%40cendor%2Fsdk)](https://www.npmjs.com/package/@cendor/sdk) ![Node](https://img.shields.io/badge/node-%E2%89%A518-blue) ![License](https://img.shields.io/badge/license-Apache_2.0-blue) ![module: ESM](https://img.shields.io/badge/module-ESM-blue) ![types: TypeScript](https://img.shields.io/badge/types-TypeScript-blue) [![Biome](https://img.shields.io/badge/lint-biome-60a5fa)](https://biomejs.dev)
+[![npm: @cendor/sdk](https://img.shields.io/npm/v/@cendor/sdk.svg?label=%40cendor%2Fsdk)](https://www.npmjs.com/package/@cendor/sdk) ![Node](https://img.shields.io/badge/node-%E2%89%A520-blue) ![License](https://img.shields.io/badge/license-Apache_2.0-blue) ![module: ESM](https://img.shields.io/badge/module-ESM-blue) ![types: TypeScript](https://img.shields.io/badge/types-TypeScript-blue) [![Biome](https://img.shields.io/badge/lint-biome-60a5fa)](https://biomejs.dev) [![CI](https://github.com/cendorhq/cendor-sdk-js/actions/workflows/ci.yml/badge.svg)](https://github.com/cendorhq/cendor-sdk-js/actions/workflows/ci.yml)
 
 <!-- cendor:downloads:start — self-hosted badges from cendor.ai (no third party in the render path).
      The numbers live inside the SVGs, regenerated daily from the committed ledger, so this file
@@ -160,7 +160,8 @@ canonical shape, so a run can **hand off between providers** without rewriting i
 > Anthropic, Gemini, Bedrock, Ollama, Hugging Face, Azure AI Foundry (Chat + Responses), and Foundry
 > Local. The installed `@cendor/core`'s `instrument()` detects each client and records usage/cost on
 > the bus (Hugging Face / Ollama / Gemini / Bedrock-converse shipped in `@cendor/core` 0.3.0; this
-> package pins the current line). Source of truth: the [parity matrix](https://cendor.ai/docs/languages).
+> package pins the current line — that release is from core's pre-1.0 series, not the `3.x` line you
+> install today). Source of truth: the [parity matrix](https://cendor.ai/docs/languages).
 
 ## More in the box
 
@@ -219,14 +220,14 @@ await run(support, 'How long do refunds take?');   // retrieved context injected
 
 ## Design principles
 
-1. **Cooperate through core.** The SDK hard-depends only on `@cendor/core`; every governance tool integrates through core's bus and interceptor seams — nothing patches anything.
+1. **Cooperate through core.** The SDK adds no governance machinery of its own — it depends on all seven libraries (see [Install](#install)) and each one attaches through `@cendor/core`'s bus and interceptor seams. No tool imports another, and nothing patches anything.
 2. **Governed by default, escapable.** Each layer is one wrapper or one option; removing it never breaks the loop.
 3. **Local-first, no servers.** Sessions, checkpoints, audit chains, and cassettes are local files. Cloud and OpenTelemetry export are opt-in.
 4. **Same API in both languages.** `snake_case` ↔ `camelCase`, identical defaults and error names — see the [parity matrix](https://cendor.ai/docs/languages). Faithful to the Python SDK's surface.
 
 ## Scope & honest limits
 
-- **Usage/cost capture for HF / Ollama / Gemini / Bedrock** rides `@cendor/core`'s provider detection (released together); OpenAI/Anthropic/Azure/Foundry Local capture today (see the [provider table](#every-major-provider--one-canonical-loop)).
+- **A streamed call's token count can be an estimate.** Capture is live for every provider in the [table above](#every-major-provider--one-canonical-loop), but when a provider reports no usage on the stream, `@cendor/core` recovers the count offline and flags it (`cendor.usage_estimated`) rather than passing a guess off as measured. Non-streamed calls use the provider's reported figures.
 - **`onExceed: 'raise'` overshoots by one call** — it's post-flight. For a true ceiling use `'block'`.
 - **Unpriced models record `$0`,** so a USD cap can't bind on them — `registerModelPrice(...)` or use a token cap.
 - **`guard` / interceptors are process-global** — they register on the single in-process bus, so install policy once at startup rather than toggling per request.

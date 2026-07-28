@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/@cendor/sdk.svg)](https://www.npmjs.com/package/@cendor/sdk) [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-**Build an LLM agent with spending limits, a tamper-evident audit trail, PII redaction, and record/replay testing built in from the start** — a governed agent in about 10 lines. The TypeScript port of [`cendor-sdk`](https://github.com/cendorhq/cendor-sdk); governance is the foundation, not a plugin. Hard-depends only on `@cendor/core`; the other `@cendor/*` libraries integrate through core's bus/interceptor seams.
+**Build an LLM agent with spending limits, a tamper-evident audit trail, PII redaction, and record/replay testing built in from the start** — a governed agent in about 10 lines. The TypeScript port of [`cendor-sdk`](https://github.com/cendorhq/cendor-sdk); governance is the foundation, not a plugin. It adds no governance machinery of its own: all seven `@cendor/*` libraries ship as dependencies, and each cooperates through `@cendor/core`'s bus/interceptor seams — no tool imports another.
 
 ```ts
 import OpenAI from 'openai';
@@ -31,15 +31,16 @@ console.log(verify('audit.jsonl', { key: process.env.KEY })); // [true, "ok: ...
 [Keys & providers →](https://cendor.ai/docs/sdk/providers#api-keys--credentials)
 
 
-## Your runs show up in your backend, with no telemetry code (0.22.0)
+## Observability — your OTel backend, zero telemetry code
 
 Configure an OpenTelemetry provider the way you already would (or point `OTEL_EXPORTER_OTLP_ENDPOINT`
-at [Cendor Monitor](https://cendor.ai/docs/monitor)) and `run()` does the rest: an `agent.run` root with
-its steps as children, usage/cost rollups, your `session` id as `gen_ai.conversation.id`, and — because
-the root is the active span — governance correlated to the run, including `governance.*` spans for the
-budget or guardrail that stopped it. An explicit `live_spans()`/`liveSpans()` still wins;
-`CENDOR_TELEMETRY=off` turns it all off; `CENDOR_DEBUG_TELEMETRY=1` says what was detected. Cendor has
-no endpoint, exporter or key — it emits into **your** provider.
+at [Cendor Monitor](https://cendor.ai/docs/monitor)) and `run()` does the rest: an `agent.run` root
+span with each step as a child, usage/cost rollups, your `session` id as `gen_ai.conversation.id`,
+and — because the root is the active span — governance correlated to the run, including the
+`governance.*` span for the budget or guardrail that stopped it. Concurrent runs each land under
+their own root. An explicit `liveSpans()` still wins; `CENDOR_TELEMETRY=off` turns it all off;
+`CENDOR_DEBUG_TELEMETRY=1` says what was detected. Cendor has no endpoint, exporter, or key — it
+emits into **your** provider.
 
 ## What's implemented
 
@@ -49,7 +50,7 @@ no endpoint, exporter or key — it emits into **your** provider.
   Ollama, Hugging Face, and Azure AI Foundry (chat + responses) + Foundry Local, driven through the
   real SDKs (`instrument()`ed); provider inferred from the model id, or pass a pre-built `client`.
   Token/cost is captured end-to-end for every provider by the installed `@cendor/core`'s
-  `instrument()` (Hugging Face / Ollama / Gemini / Bedrock-converse shipped in `@cendor/core` 0.3.0).
+  `instrument()` — no per-provider wiring, and no provider left to a future release.
 - **Tools via zod** — `tool(fn, { parameters: z.object({...}) })` → each provider's native tool shape.
 - **Governance** (the identical re-exported libraries — CI-pinned since 0.10.0, incl. `guard`) — `budget`/`withBudget`, `track`, `report`, `guard`,
   `AuditLog`/`verify`, `registerModelPrice`, `BudgetExceeded`. A bare `run()` needs none of it.
