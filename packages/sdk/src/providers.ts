@@ -14,6 +14,7 @@
 import { createRequire } from 'node:module';
 import { instrument } from '@cendor/core';
 import { MissingAPIKeyError } from './errors.js';
+import { geminiSanitize } from './tools.js';
 import type { JsonSchema, Tool } from './tools.js';
 import type { Message, ParsedResponse, ToolInvocation } from './types.js';
 
@@ -1082,8 +1083,9 @@ export class GeminiProvider extends BaseProvider {
   formatTools(tools: Tool[]): unknown {
     // `@google/genai` is camelCase-only and drops unknown request keys silently, so the declarations
     // list key must be `functionDeclarations` (snake_case `function_declarations` is ignored → the
-    // model never sees the tools). The SDK strips non-Gemini JSON-schema keys (e.g. additionalProperties)
-    // client-side, so the schema itself needs no sanitizing here (unlike the Python google-genai path).
+    // model never sees the tools). `Tool.toGemini()` sanitizes each parameter schema: `@google/genai`
+    // strips camelCase `additionalProperties` only while recursing `properties`/`items`/`anyOf`, so a
+    // `prefixItems` or `$defs` subtree still carries it to the wire (measured on 2.13.0).
     return tools.length > 0 ? [{ functionDeclarations: tools.map((t) => t.toGemini()) }] : null;
   }
 
@@ -1109,7 +1111,12 @@ export class GeminiProvider extends BaseProvider {
     } else if (opts.jsonMode) {
       // Gemini can't combine function tools with a forced JSON schema.
       config.responseMimeType = 'application/json';
-      if (opts.outputSchema) config.responseSchema = opts.outputSchema;
+      // Same sanitizer as a tool declaration (Tool.toGemini), so the two can't drift.
+      // `zodSchemaToJson` stamps `additionalProperties: false` on every object node, and the Gemini
+      // `Schema` proto does not model that key; `@google/genai` strips it only while recursing
+      // `properties`/`items`/`anyOf`, so a zod tuple (`prefixItems`) or a `$defs` subtree still
+      // carried it to the wire and the Developer API 400s — `Agent({ outputType })` failed outright.
+      if (opts.outputSchema) config.responseSchema = geminiSanitize(opts.outputSchema);
     }
     const kwargs: Record<string, unknown> = { model, contents };
     if (Object.keys(config).length > 0) kwargs.config = config;

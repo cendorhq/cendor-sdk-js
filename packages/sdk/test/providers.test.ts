@@ -30,7 +30,7 @@ import {
   resolveProvider,
   toolResultMessage,
 } from '../src/providers.js';
-import { tool } from '../src/tools.js';
+import { tool, zodSchemaToJson } from '../src/tools.js';
 import type { Message } from '../src/types.js';
 import { bedrockResponse, geminiResponse, ollamaResponse, openaiChat } from './_helpers.js';
 
@@ -399,6 +399,206 @@ describe('build_kwargs', () => {
     const args = asst.tool_calls![0]!.function.arguments;
     expect(typeof args).toBe('object');
     expect(args).toEqual({ city: 'Paris' });
+  });
+});
+
+// ------------------------------------------------------------------- Gemini schema sanitizing
+
+/** Every key in a JSON-Schema tree, as a `$.a.b[0].c` path. Property *names* are included too —
+ * callers filter. Used to prove a key is absent at EVERY depth, not just the root. */
+function keyPaths(node: unknown, path = '$', out: string[] = []): string[] {
+  if (Array.isArray(node)) {
+    node.forEach((v, i) => keyPaths(v, `${path}[${i}]`, out));
+    return out;
+  }
+  if (!node || typeof node !== 'object') return out;
+  for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+    out.push(`${path}.${k}`);
+    keyPaths(v, `${path}.${k}`, out);
+  }
+  return out;
+}
+
+const pathsEndingIn = (node: unknown, key: string): string[] =>
+  keyPaths(node).filter((p) => p.endsWith(`.${key}`));
+
+describe('Gemini schema sanitizing', () => {
+  // Covers a root object, a nested object, `array` items, an optional field, a nullable field and a
+  // tuple — `prefixItems` is the position @google/genai's own stripper does NOT recurse into, so an
+  // `additionalProperties` there reaches the wire (see providers-http.test.ts).
+  const outputType = z.object({
+    label: z.string(),
+    nested: z.object({ deep: z.string(), n: z.number().optional() }),
+    rows: z.array(z.object({ qty: z.number() })),
+    maybe: z.object({ a: z.string() }).nullable(),
+    opt: z.object({ b: z.string() }).optional(),
+    tup: z.tuple([z.object({ t: z.string() })]),
+  });
+
+  it('outputType: responseSchema carries no additionalProperties at any depth', () => {
+    const schema = zodSchemaToJson(outputType);
+    // The SDK deliberately stamps `additionalProperties: false` on every object node
+    // (zodSchemaToJson), so an unsanitized responseSchema reliably carries the rejected key.
+    expect(pathsEndingIn(schema, 'additionalProperties').length).toBeGreaterThan(4);
+    const k = new GeminiProvider().buildKwargs('gemini-3-pro-preview', [], [], '', {
+      jsonMode: true,
+      outputSchema: schema,
+    }) as { config: { responseSchema: unknown } };
+    expect(pathsEndingIn(k.config.responseSchema, 'additionalProperties')).toEqual([]);
+    // `$defs`/`$ref` are deliberately KEPT — dropping half the pair breaks a nested model outright.
+    expect(k.config.responseSchema).toEqual({
+      type: 'object',
+      properties: {
+        label: { type: 'string' },
+        nested: {
+          type: 'object',
+          properties: { deep: { type: 'string' }, n: { type: 'number' } },
+          required: ['deep'],
+        },
+        rows: {
+          type: 'array',
+          items: { type: 'object', properties: { qty: { type: 'number' } }, required: ['qty'] },
+        },
+        maybe: {
+          anyOf: [
+            { type: 'object', properties: { a: { type: 'string' } }, required: ['a'] },
+            { type: 'null' },
+          ],
+        },
+        opt: { type: 'object', properties: { b: { type: 'string' } }, required: ['b'] },
+        tup: {
+          type: 'array',
+          prefixItems: [{ type: 'object', properties: { t: { type: 'string' } }, required: ['t'] }],
+        },
+      },
+      required: ['label', 'nested', 'rows', 'maybe', 'tup'],
+    });
+  });
+
+  it('outputType: the caller’s schema object is never mutated', () => {
+    const schema = zodSchemaToJson(outputType);
+    const before = JSON.stringify(schema);
+    new GeminiProvider().buildKwargs('gemini-3-pro-preview', [], [], '', {
+      jsonMode: true,
+      outputSchema: schema,
+    });
+    expect(JSON.stringify(schema)).toBe(before);
+  });
+
+  it('a tool declaration is sanitized by the same rule', () => {
+    const t = tool(() => null, { name: 'search', parameters: outputType });
+    const before = JSON.stringify(t.parameters);
+    const decl = t.toGemini() as { parameters: unknown };
+    expect(pathsEndingIn(decl.parameters, 'additionalProperties')).toEqual([]);
+    // Tool.parameters is a public readonly field — formatting must not rewrite it.
+    expect(JSON.stringify(t.parameters)).toBe(before);
+    expect(pathsEndingIn(t.parameters, 'additionalProperties').length).toBeGreaterThan(4);
+  });
+
+  it('a raw (non-zod) schema: snake_case, title and default go; $defs/$ref stay', () => {
+    // `additional_properties` is google-genai's own snake_case spelling of the same field; the TS
+    // client forwards it verbatim (it only knows the camelCase name), so it must be dropped here.
+    const raw = {
+      type: 'object',
+      title: 'Report',
+      properties: {
+        child: { $ref: '#/$defs/Child' },
+        n: { type: 'number', default: 3 },
+      },
+      $defs: {
+        Child: {
+          type: 'object',
+          title: 'Child',
+          properties: { z: { type: 'string' } },
+          additional_properties: false,
+        },
+      },
+      additional_properties: false,
+    };
+    const before = JSON.stringify(raw);
+    const k = new GeminiProvider().buildKwargs('gemini-2.0-flash', [], [], '', {
+      jsonMode: true,
+      outputSchema: raw,
+    }) as { config: { responseSchema: unknown } };
+    expect(k.config.responseSchema).toEqual({
+      type: 'object',
+      properties: { child: { $ref: '#/$defs/Child' }, n: { type: 'number' } },
+      $defs: { Child: { type: 'object', properties: { z: { type: 'string' } } } },
+    });
+    expect(JSON.stringify(raw)).toBe(before);
+  });
+
+  it('a schema carrying $schema is passed through untouched', () => {
+    // MEASURED (@google/genai 2.13.0): a `$schema`-bearing schema is re-routed to the permissive
+    // `responseJsonSchema` / `parametersJsonSchema` API field, where full JSON Schema — including
+    // `additionalProperties` and `$defs` — is legal. Sanitizing it would strip meaningful keys, and
+    // dropping `$schema` itself would DOWNGRADE the request onto the strict `responseSchema` proto,
+    // which does not model `$defs`/`$ref`. So this shape is left exactly as the caller wrote it.
+    const raw = {
+      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      title: 'Report',
+      type: 'object',
+      properties: { child: { $ref: '#/$defs/Child' } },
+      $defs: {
+        Child: {
+          type: 'object',
+          properties: { z: { type: 'string' } },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    };
+    const k = new GeminiProvider().buildKwargs('gemini-2.0-flash', [], [], '', {
+      jsonMode: true,
+      outputSchema: raw,
+    }) as { config: { responseSchema: unknown } };
+    expect(k.config.responseSchema).toEqual(raw);
+    expect(k.config.responseSchema).not.toBe(raw); // still a copy, never the caller's object
+  });
+
+  it('a field genuinely NAMED title/default/additionalProperties survives', () => {
+    // The drop set names schema KEYWORDS. Inside `properties` / `$defs` the keys are user data — a
+    // blind key filter would silently delete the field from the model's output contract, and the
+    // model would then never return it.
+    const schema = zodSchemaToJson(
+      z.object({
+        title: z.string(),
+        default: z.string(),
+        additionalProperties: z.string(),
+        inner: z.object({ title: z.number() }),
+      }),
+    );
+    const k = new GeminiProvider().buildKwargs('gemini-2.0-flash', [], [], '', {
+      jsonMode: true,
+      outputSchema: schema,
+    }) as {
+      config: { responseSchema: { properties: Record<string, unknown>; required: string[] } };
+    };
+    expect(Object.keys(k.config.responseSchema.properties).sort()).toEqual([
+      'additionalProperties',
+      'default',
+      'inner',
+      'title',
+    ]);
+    expect(k.config.responseSchema.required.sort()).toEqual([
+      'additionalProperties',
+      'default',
+      'inner',
+      'title',
+    ]);
+    expect(
+      (k.config.responseSchema.properties.inner as { properties: Record<string, unknown> })
+        .properties,
+    ).toEqual({ title: { type: 'number' } });
+  });
+
+  it('a schema with nothing to strip is unchanged (no false positives)', () => {
+    const schema = { type: 'object', properties: { x: { type: 'string' } }, required: ['x'] };
+    const k = new GeminiProvider().buildKwargs('gemini-2.0-flash', [], [], '', {
+      jsonMode: true,
+      outputSchema: schema,
+    }) as { config: { responseSchema: unknown } };
+    expect(k.config.responseSchema).toEqual(schema);
   });
 });
 

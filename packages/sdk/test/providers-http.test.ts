@@ -15,7 +15,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 // Route the real SDK clients' HTTP through undici's fetch, which uses the mocked global dispatcher.
 const mockedFetch = undiciFetch as unknown as typeof fetch;
 import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenAI } from '@google/genai';
 import OpenAI from 'openai';
+import { z } from 'zod';
 import { Agent, run } from '../src/index.js';
 import { anthropicMessage, isolate, openaiChat } from './_helpers.js';
 
@@ -80,5 +82,45 @@ describe('real Anthropic SDK over MockAgent', () => {
     expect(result.usage.inputTokens).toBe(40);
     expect(result.usage.outputTokens).toBe(12);
     expect(result.cost.amount.greaterThan(0)).toBe(true);
+  });
+});
+
+describe('real @google/genai SDK over MockAgent', () => {
+  it('never puts additionalProperties on the wire for an outputType', async () => {
+    // @google/genai DOES strip camelCase `additionalProperties` client-side — but only while
+    // recursing `properties` / `items` / `anyOf`. A `prefixItems` subtree (a zod tuple) is copied
+    // VERBATIM, so an unsanitized schema leaks the key the Gemini Developer API 400s on. Proven at
+    // the wire, not at our own boundary: the client is a different codebase from google-genai.
+    let body: unknown;
+    mockAgent
+      .get('https://generativelanguage.googleapis.com')
+      .intercept({ path: (p: string) => p.includes(':generateContent'), method: 'POST' })
+      .reply(200, (opts: { body?: string | null }) => {
+        body = typeof opts.body === 'string' ? JSON.parse(opts.body) : null;
+        return {
+          candidates: [
+            { finishReason: 'STOP', content: { parts: [{ text: '{"tup":[{"t":"x"}]}' }] } },
+          ],
+          usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 3 },
+        };
+      });
+
+    const client = new GoogleGenAI({ apiKey: 'test-key' });
+    const agent = new Agent({
+      name: 'gm',
+      model: 'gemini-3-pro-preview',
+      client,
+      outputType: z.object({ tup: z.tuple([z.object({ t: z.string() })]) }),
+    });
+    await run(agent, 'hi');
+
+    const wire = JSON.stringify((body as { generationConfig?: unknown }).generationConfig ?? body);
+    expect(wire, 'a prefixItems subtree reaches the wire unprocessed by @google/genai').toContain(
+      'prefixItems',
+    );
+    expect(wire, 'additionalProperties reached the Gemini API').not.toContain(
+      'additionalProperties',
+    );
+    expect(wire).not.toContain('additional_properties');
   });
 });
