@@ -11,7 +11,46 @@ permissions:
   id-token: write # npm provenance via OIDC
 
 jobs:
+  # GATE — publishing is conditional on the gates passing, in THIS workflow's graph.
+  # `ci.yml` and this workflow are two INDEPENDENT `push: main` triggers with no dependency between
+  # them, so a commit whose CI run goes red still reaches `changeset publish` — measured in the
+  # sibling repo (cendor-libs-js, 2026-07-27): one push published to npm and failed CI in the same
+  # breath. A cross-workflow status is not a gate; a `needs:` edge is. These steps mirror ci.yml's
+  # `build-test` job (same install, same Node matrix, same order) — keep the two in sync.
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # least privilege: verifying needs no write, only the publish job does
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile # resolves @cendor/* from npm
+      # GATE G1 — exactly one @cendor/core. Runs BEFORE the suite: with two cores installed the tests
+      # can still pass (each library works in isolation) while cross-library cooperation is silently
+      # dead, so a green suite is not evidence.
+      - name: G1 — one @cendor/core
+        run: pnpm check:one-core
+      - name: Typecheck + build
+        run: pnpm build
+      - name: Lint
+        run: pnpm lint
+      # A MAJOR is irreversible on npm and re-frames the product for every reader. It is never an
+      # autonomous decision: a major changeset must carry an in-band `Approved-Major:` line.
+      - name: a major bump needs explicit approval
+        run: pnpm check:major
+      - name: Test (no network — stub clients + undici MockAgent)
+        run: pnpm test
+
   release:
+    needs: verify # nothing is published unless every `verify` leg is green
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
