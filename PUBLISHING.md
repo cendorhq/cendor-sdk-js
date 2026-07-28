@@ -5,17 +5,31 @@ installs **from the npm registry** like any consumer — no local links, no sibl
 
 ## Option A — automated with `NPM_TOKEN` (active) ✅
 
-`release.yml` is wired for token-based direct-publish-on-push. One-time setup — add **one** repo secret
-(GitHub → this repo → Settings → Secrets and variables → Actions):
+`release.yml` uses the changesets **"Version Packages" PR** flow with an `NPM_TOKEN`, so
+**publishing is a merge, not a push**. One-time setup — add **one** repo secret (GitHub → this repo →
+Settings → Secrets and variables → Actions):
 
 - **`NPM_TOKEN`** — an npm **automation** token for the `cendor` org (same kind used by the libs repo).
 
 Then: land a changeset (`pnpm changeset`) → push to `main`. `release.yml` runs its **`verify` gate**
-(below), and only if that is green runs `changeset version` (bumps + CHANGELOGs, committed back with
-`[skip ci]`), then `changeset publish` publishes `@cendor/sdk` and tags `@cendor/sdk@<version>`. No
-Version PR (mirrors the Python release flow). **Provenance is off**
-(`NPM_CONFIG_PROVENANCE: "false"` in `release.yml`) because npm/sigstore rejects a private source
-repo (`E422`); flip it to `"true"` once the repo is public.
+(below), and only if that is green does `release` run `changesets/action`, which branches:
+
+1. **changesets pending** → it opens or updates a PR titled **`chore: version packages`** on the branch
+   `changeset-release/main`, carrying the version bumps and CHANGELOGs. **Nothing is published yet.**
+2. **no changesets, versions already bumped** (you merged that PR) → `changeset publish` publishes
+   `@cendor/sdk` / `@cendor/init` and tags `@cendor/<pkg>@<version>`.
+
+**Review the version PR, then merge it — the merge is the release.**
+
+> **Why the PR step exists (changed 2026-07-29).** This was direct publish-on-push: one push to `main`
+> carrying a changeset went straight to npm with no human step between the merge and the registry.
+> Fine on a private repo with an audience of one; in public an accidental push is a release, and a
+> release is irreversible. FLIP-CHECKLIST A4. The flow needs the org setting *Allow GitHub Actions to
+> create and approve pull requests* (enabled org-wide 2026-07-29 — the repo-level toggle 409s while
+> the org forbids it), and `createGithubReleases` is deliberately off to preserve current behaviour.
+
+**Provenance is off** (`NPM_CONFIG_PROVENANCE: "false"` in `release.yml`) because npm/sigstore rejects
+a private source repo (`E422`); flip it to `"true"` once the repo is public.
 
 ### Publishing is gated on the tests — in `release.yml`, not `ci.yml`
 
