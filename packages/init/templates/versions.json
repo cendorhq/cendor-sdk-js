@@ -1,5 +1,5 @@
 {
-  "_comment": "GENERATED — do not hand-edit. Source: cendor-site/src/data/versions.json; regenerate with `node scripts/gen-version-mirrors.mjs` in cendor-site. `doctor` reads this OFFLINE to decide whether an installed cendor/@cendor package is behind. It is only a hint — the live source of truth is https://cendor.ai/releases.json (see `doctor --online`).",
+  "_comment": "GENERATED — do not hand-edit; a maintainer regenerates it from Cendor’s single version source, and a hand edit is overwritten. `doctor` reads this OFFLINE to decide whether an installed cendor/@cendor package is behind. It is only a hint — the live source of truth is https://cendor.ai/releases.json (see `doctor --online`).",
   "asOf": "2026-07-27",
   "npm": {
     "@cendor/core": "3.0.0",
