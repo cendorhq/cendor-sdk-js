@@ -772,6 +772,88 @@ export function canonicalToGemini(messages: Message[]): Message[] {
 }
 
 /**
+ * Whether `model` belongs to a Gemini family that *validates* thought signatures on replayed
+ * function calls (3.x and later). `gemini-2.0-flash` / `gemini-1.5-pro` never did.
+ */
+function geminiValidatesSignatures(model: string): boolean {
+  const m = /gemini-(\d+)/.exec(model.toLowerCase());
+  return m !== null && Number(m[1]) >= 3;
+}
+
+/**
+ * Replay a **foreign** provider's function call as text so a Gemini 3.x request stays valid.
+ *
+ * Gemini 3.x rejects a replayed `functionCall` that carries no `thoughtSignature` (400, "missing
+ * thought_signature"). A cross-provider handoff replays the *supervisor's* history into the receiving
+ * agent — an OpenAI supervisor's `transfer_to_*` call, and any real tool it called before that — and
+ * none of those ever had a signature.
+ *
+ * There is no honest value to supply: a thought signature is an opaque token Google issues over
+ * **Gemini's own** reasoning for that context. Minting one would misrepresent provenance and be
+ * rejected as invalid anyway. So the turn is re-emitted as a text part that states the call, and its
+ * matching `functionResponse` follows as text — semantically the same information in a shape the API
+ * always accepts. Nothing is fabricated and nothing is dropped.
+ *
+ * Scope is deliberately narrow, so Gemini's own loops are byte-identical to before:
+ * - only for models that validate (see {@link geminiValidatesSignatures});
+ * - only for a model turn where **not one** function-call part carries a signature. A turn with at
+ *   least one signature came from Gemini itself (a parallel-call turn signs only the first part) and
+ *   is replayed verbatim.
+ */
+function textifyForeignCalls(contents: Message[], model: string): Message[] {
+  if (!geminiValidatesSignatures(model)) return contents;
+  const out: Message[] = [];
+  let textified = new Set<string>(); // names degraded in the model turn just emitted
+  for (const turn of contents) {
+    const parts = turn.parts;
+    if (!Array.isArray(parts)) {
+      textified = new Set();
+      out.push(turn);
+      continue;
+    }
+    if (turn.role === 'model') {
+      const calls = parts.filter((p) => get(p, 'functionCall') != null);
+      if (calls.length === 0 || calls.some((p) => get(p, 'thoughtSignature') != null)) {
+        textified = new Set();
+        out.push(turn);
+        continue;
+      }
+      textified = new Set(
+        calls.map((p) => String(get(get(p, 'functionCall'), 'name') ?? '')).filter((n) => n !== ''),
+      );
+      out.push({
+        role: 'model',
+        parts: parts.map((p) => {
+          const fc = get(p, 'functionCall');
+          if (fc == null) return p;
+          const name = String(get(fc, 'name') ?? '');
+          return { text: `Called tool ${name} with ${JSON.stringify(get(fc, 'args') ?? {})}` };
+        }),
+      });
+      continue;
+    }
+    if (textified.size > 0 && parts.some((p) => get(p, 'functionResponse') != null)) {
+      out.push({
+        role: turn.role,
+        parts: parts.map((p) => {
+          const fr = get(p, 'functionResponse');
+          if (fr == null) return p;
+          const name = String(get(fr, 'name') ?? '');
+          if (!textified.has(name)) return p;
+          const result = get(get(fr, 'response'), 'result');
+          return { text: `Result of ${name}: ${stringify(result ?? get(fr, 'response') ?? '')}` };
+        }),
+      });
+      textified = new Set();
+      continue;
+    }
+    textified = new Set();
+    out.push(turn);
+  }
+  return out;
+}
+
+/**
  * Translate canonical (OpenAI-shape) history to Bedrock Converse `messages`. Assistant tool calls
  * become `toolUse` blocks; tool results become `toolResult` blocks folded into a following `user` turn
  * (consecutive results merge). Multimodal user turns keep their text (image bytes out of scope here).
@@ -1012,7 +1094,9 @@ export class GeminiProvider extends BaseProvider {
     instructions: string,
     opts: BuildKwargsOptions,
   ): Record<string, unknown> {
-    const contents = canonicalToGemini(messages);
+    // A cross-provider handoff replays a foreign provider's unsigned functionCall; gemini-3.x 400s
+    // on one, and no honest signature exists for it — see textifyForeignCalls.
+    const contents = textifyForeignCalls(canonicalToGemini(messages), model);
     // camelCase config keys — `@google/genai` ignores snake_case (`system_instruction`,
     // `max_output_tokens`, …), which silently dropped the system prompt, token cap and JSON mode.
     const config: Record<string, unknown> = {};

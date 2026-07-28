@@ -478,6 +478,69 @@ describe('canonical → provider translators', () => {
     expect(parts.find((p) => p.thoughtSignature)?.thoughtSignature).toBe('SIG123');
   });
 
+  it('Gemini 3: a foreign, unsigned functionCall is replayed as text, never fabricated', () => {
+    // Cross-provider handoff INTO a gemini agent: the receiving agent replays the *supervisor's*
+    // history. An OpenAI supervisor's `transfer_to_*` call never carried a thoughtSignature — and
+    // gemini-3.x 400s on a replayed functionCall that has none. No honest signature exists for a
+    // call another provider made, so the turn goes back as text instead.
+    const hist: Message[] = [
+      { role: 'user', content: 'refund my order 42' },
+      assistantMessage(null, [
+        { id: 'call_9xKq3', name: 'transfer_to_research', arguments: { topic: 'refund policy' } },
+      ]),
+      toolResultMessage('call_9xKq3', 'transfer_to_research', 'transferred to research'),
+    ];
+    const wire = JSON.stringify(
+      new GeminiProvider().buildKwargs('gemini-3-pro-preview', hist, [], '', {}).contents,
+    );
+    expect(wire, 'an unsigned foreign functionCall still reaches gemini-3').not.toContain(
+      'functionCall',
+    );
+    expect(wire, 'the orphaned functionResponse still reaches gemini-3').not.toContain(
+      'functionResponse',
+    );
+    expect(wire, 'a signature was fabricated').not.toContain('thoughtSignature');
+    // the information survives — as text the API always accepts
+    expect(wire).toContain('transfer_to_research');
+    expect(wire).toContain('refund policy');
+    expect(wire).toContain('transferred to research');
+    // older families never validated signatures — their payload must be untouched
+    expect(
+      JSON.stringify(
+        new GeminiProvider().buildKwargs('gemini-2.0-flash', hist, [], '', {}).contents,
+      ),
+    ).toContain('functionCall');
+  });
+
+  it("Gemini 3: the model's OWN signed tool turn is still replayed verbatim", () => {
+    const parsed = new GeminiProvider().parse({
+      candidates: [
+        {
+          content: {
+            parts: [
+              {
+                functionCall: { name: 'get_weather', args: { city: 'Paris' } },
+                thoughtSignature: 'SIG123',
+              },
+              { functionCall: { name: 'get_time', args: { city: 'Paris' } } }, // parallel: unsigned
+            ],
+          },
+        },
+      ],
+    });
+    const hist: Message[] = [
+      assistantMessage(null, parsed.toolCalls),
+      toolResultMessage(parsed.toolCalls[0]!.id, 'get_weather', 'Sunny in Paris'),
+    ];
+    const wire = JSON.stringify(
+      new GeminiProvider().buildKwargs('gemini-3-pro-preview', hist, [], '', {}).contents,
+    );
+    expect(wire).toContain('SIG123');
+    expect(wire).toContain('functionCall');
+    expect(wire).toContain('get_time'); // a partially-signed parallel turn is Gemini's own — verbatim
+    expect(wire).toContain('functionResponse');
+  });
+
   it('Bedrock tool round-trip', () => {
     const wire = canonicalToBedrock(toolHistory());
     expect(wire[0]).toEqual({ role: 'user', content: [{ text: 'weather in Paris?' }] });
