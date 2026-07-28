@@ -1,0 +1,85 @@
+name: Feature request
+description: "Suggest an idea or improvement for @cendor/sdk or the @cendor/init CLI."
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The SDK is a *governed agent loop* built on the `@cendor/*` libraries: budgets, audit,
+        redaction, context governance, and record/replay are the foundation, not plugins. It adds **no
+        governance machinery of its own** — it attaches to `@cendor/core`'s bus / interceptor / sink
+        seams and patches nothing, and the `budget` / `guard` / `AuditLog` / `rules` it exports are the
+        real library objects re-exported.
+
+        Two useful framings before you write:
+
+        - **A generic capability belongs one layer down.** If what you want is a way to govern *any*
+          call — a new budget shape, a new redaction rule, a new `instrument()` target — it belongs in
+          [cendor-libs-js](https://github.com/cendorhq/cendor-libs-js) (and its Python twin), not here.
+          The SDK owns *orchestration*: the loop, handoff, tool schemas, provider response
+          normalization.
+        - **Close a parity gap.** If the Python [`cendor-sdk`](https://github.com/cendorhq/cendor-sdk)
+          can do it and this one cannot, say which row of the
+          [parity matrix](https://cendor.ai/docs/languages) you want closed.
+
+        The checkboxes at the bottom are the constraints most proposals meet.
+  - type: dropdown
+    id: artifact
+    attributes:
+      label: Which artifact?
+      options:
+        - "@cendor/sdk (the governed agent SDK)"
+        - "@cendor/init (the offline init/doctor CLI)"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which area?
+      options:
+        - Agent loop / tools
+        - Providers (a new provider path, or a response-shape gap)
+        - Multi-agent (handoff, sequential, parallel, supervisor)
+        - Governance (budget, guard, Policy, AuditLog, rules, trace)
+        - Guardrails
+        - Sessions, memory, checkpoint/resume
+        - RAG / embeddings
+        - Interop (MCP, A2A, Foundry, Microsoft 365 Agents SDK)
+        - Streaming
+        - Human-in-the-loop (approvals)
+        - Eval harness
+        - Observability / OTel export
+        - Types (a wrong or too-wide public type, a missing `@example`)
+        - The init/doctor CLI (scaffolding, rules templates, wiring checks)
+        - Docs (the SDK's pages live in cendor-sdk/docs)
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Describe the use case first — what your agent has to do, and what is in the way today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would the API look like? A full TypeScript signature is ideal, plus the one-line correct call shape a user would copy.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Including "I wrote it around the SDK like this" — that is useful signal.
+  - type: checkboxes
+    id: principles
+    attributes:
+      label: Fit with how the SDK is built
+      description: If one of these does not hold, say so in the proposal — it may still be the right idea, just in a different place.
+      options:
+        - label: This stays local-first — no required account, network, or running server, and provider SDKs stay optional peers (`@cendor/core` is the only hard dependency).
+        - label: This cooperates through `@cendor/core`'s seams rather than patching a provider SDK or re-implementing governance a library already owns — the re-exported objects stay identical to the library's.
+        - label: This is a governed-agent-loop concern, not a generic library feature — a generic one belongs in [cendor-libs-js](https://github.com/cendorhq/cendor-libs-js) instead.
+        - label: It can be tested offline (provider-shaped stub clients or `undici`'s `MockAgent`), with no API key.
+        - label: If it touches run scope, streaming, or concurrency, it can be tested with **two overlapping runs** on Node 20/22 as well as 24+ — not just sequentially on the newest Node.
+        - label: Any number this would let me claim is reproducible from the tests or a benchmark.

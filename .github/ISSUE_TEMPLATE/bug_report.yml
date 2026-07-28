@@ -1,0 +1,184 @@
+name: Bug report
+description: "@cendor/sdk (or the @cendor/init CLI) behaves incorrectly."
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Two quick routing notes before you start:
+
+        - **Security vulnerability?** Do not open a public issue — report it privately through
+          [GitHub Private Vulnerability Reporting](https://github.com/cendorhq/cendor-sdk-js/security/advisories/new)
+          (details in [`SECURITY.md`](https://github.com/cendorhq/cendor-sdk-js/blob/main/SECURITY.md)).
+        - **Wrong repo?** If the flaw is in a library *beneath* the SDK — `@cendor/core`,
+          `@cendor/tokenguard`, `@cendor/guardrails`, `@cendor/acttrace`, `@cendor/contextkit`,
+          `@cendor/squeeze`, `@cendor/cassette` — file it on
+          [cendor-libs-js](https://github.com/cendorhq/cendor-libs-js/issues). The `budget` / `guard` /
+          `AuditLog` / `rules` you import from `@cendor/sdk` are the **real** library objects
+          re-exported, so those bugs live upstream. The Python SDK is
+          [cendor-sdk](https://github.com/cendorhq/cendor-sdk/issues). If you are unsure, file here and
+          we will route it.
+  - type: dropdown
+    id: artifact
+    attributes:
+      label: Which artifact?
+      options:
+        - "@cendor/sdk (the governed agent SDK)"
+        - "@cendor/init (the offline init/doctor CLI — `npx @cendor/init`)"
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: "@cendor/sdk 3.0.1"
+    validations:
+      required: true
+  - type: input
+    id: lib-versions
+    attributes:
+      label: Resolved @cendor/* library versions
+      description: |
+        **This is usually the field that answers the report.** The SDK re-exports the real library
+        objects rather than wrapping them, so the version *beneath* it decides the behaviour. Paste
+        `npm ls @cendor/core @cendor/tokenguard @cendor/guardrails @cendor/acttrace @cendor/contextkit @cendor/squeeze @cendor/cassette`
+        (or the `@cendor/*` block of your lockfile) — resolved versions, not the ranges you wrote.
+      placeholder: "@cendor/core 3.0.0, @cendor/acttrace 3.1.0, @cendor/tokenguard 3.0.0, …"
+    validations:
+      required: true
+  - type: input
+    id: node
+    attributes:
+      label: Node version and OS
+      description: |
+        Please be exact, and say if you have tried more than one. Node's `AsyncLocalStorage`
+        changed implementation in Node 24 (AsyncContextFrame), so **anything touching run scope,
+        concurrency, streaming, or context propagation behaves differently on 20/22 than on 24+** — a
+        result from one tells us nothing about the other. This SDK's CI runs 20 and 22; the published
+        packages declare `engines.node >= 18`.
+      placeholder: Node 20.20.0 (also tried 24.9.0), Ubuntu 24.04
+    validations:
+      required: true
+  - type: dropdown
+    id: package-manager
+    attributes:
+      label: Package manager
+      options:
+        - pnpm
+        - npm
+        - yarn
+        - bun
+        - Deno
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Which provider path?
+      description: The normalization path the run took. Pick the first option if your repro drives a provider-shaped stub — that is the fastest kind of repro for us.
+      options:
+        - None — a stub client, or the bug is not provider-specific
+        - OpenAI (Chat Completions)
+        - OpenAI (Responses API)
+        - Anthropic (Messages)
+        - Google Gemini (@google/genai)
+        - AWS Bedrock (converse)
+        - Ollama (local)
+        - "Hugging Face (@huggingface/inference)"
+        - Azure AI Foundry (Chat)
+        - Azure AI Foundry (Responses)
+        - Foundry Local (on-device)
+        - Microsoft 365 Agents SDK host (pro-code custom engine agent)
+    validations:
+      required: true
+  - type: input
+    id: peers
+    attributes:
+      label: Which optional peers are installed?
+      description: Provider SDKs are optional peers, never dependencies — `@cendor/core` is the SDK's only hard dependency. Which ones you installed changes what is importable.
+      placeholder: openai 6.49.0, @modelcontextprotocol/sdk 1.x, @opentelemetry/api 1.x
+  - type: dropdown
+    id: entrypoint
+    attributes:
+      label: Which entry point?
+      options:
+        - "run(agent, input) — a single awaited run"
+        - "run.stream(…) / run.astream(…) — streaming"
+        - Multi-agent (handoff / sequential / parallel / supervisor)
+        - Interop (MCP tools, A2A, FoundryAdapter)
+        - Sessions / memory / checkpoint-resume
+        - Governance scope (budget / guard / Policy / AuditLog / rules / trace)
+        - Tools (`tool()` / `asTool()`) or a structured `outputType`
+        - RAG / embeddings (`embed`, `VectorIndex`)
+        - Eval harness (`evaluate`)
+        - Human-in-the-loop (`requireApproval`)
+        - Observability / OTel export
+        - Other / not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: zod
+    attributes:
+      label: If a tool or output schema is involved — which zod?
+      description: |
+        Tool parameters and `outputType` require a **zod 4** schema; the SDK converts it with zod 4's
+        native `z.toJSONSchema`. A zod 3 schema is rejected with an explicit error rather than silently
+        producing the wrong JSON Schema — on zod **3.25+** the fix is to change the import to
+        `import { z } from 'zod/v4'`; otherwise upgrade zod to `^4`. If you see that error, it is
+        working as designed, and this is the field that says so.
+      options:
+        - Not applicable — no tool or output schema involved
+        - "zod ^4"
+        - "zod 3.25+, imported from `zod/v4`"
+        - "zod 3 (classic `import { z } from 'zod'`)"
+        - A raw JSON Schema object, not zod
+        - Not sure
+  - type: textarea
+    id: one-core
+    attributes:
+      label: How many copies of @cendor/core are installed?
+      description: |
+        Paste `pnpm why @cendor/core` (or `npm ls @cendor/core`). **Two installed copies is two event
+        buses**, and governance then stops reaching the SDK *silently* — a guardrail decision or a
+        budget event simply never arrives, nothing throws, and no test goes red. It is almost always
+        one stale `@cendor/*` pin left behind after upgrading the rest; all `@cendor/*` share one major
+        (currently **3**), so upgrade the set together. This repo gates on it with `pnpm check:one-core`
+        — you can run the same check in your own project.
+      render: shell
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: |
+        The smallest agent + run that shows it. An **offline** repro is fastest — this whole suite runs
+        with no key and no network, using provider-shaped stub clients and `undici`'s `MockAgent`.
+        If the bug is about run scope, attribution, or concurrency, please make the repro **two
+        overlapping runs with a client that actually takes time**: a zero-latency stub finishes run A
+        before run B starts, so nothing interleaves and the defect is invisible.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error output
+      description: Paste the stack trace, the `Result` fields involved, or the audit/budget numbers. Please redact keys and any real customer content.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you file
+      options:
+        - label: I am on the latest released `@cendor/sdk`, or I have said above which version I am on and why.
+        - label: I pasted the **resolved** `@cendor/*` library versions, not the ranges from my `package.json`.
+        - label: I ran `pnpm why @cendor/core` (or `npm ls @cendor/core`) and there is exactly **one** `@cendor/core` in my tree — or I pasted the output showing otherwise.
+        - label: This is not a security vulnerability (those go through private reporting, linked above).
+        - label: Nothing I pasted contains an API key, a token, or real customer data.

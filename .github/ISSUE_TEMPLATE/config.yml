@@ -1,0 +1,23 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability (private report)
+    url: https://github.com/cendorhq/cendor-sdk-js/security/advisories/new
+    about: Never a public issue — report privately via GitHub Private Vulnerability Reporting. See SECURITY.md.
+  - name: SDK documentation
+    url: https://cendor.ai/docs/sdk/getting-started
+    about: A question, a "how do I …", or an unclear page — start here. Providers, governance, memory, interop, streaming, and the FAQ. Every code block has a TypeScript tab.
+  - name: Correct call shapes (and the common wrong ones)
+    url: https://cendor.ai/docs/for-ai-assistants
+    about: The maintained trap registry and canonical examples — including the SDK-specific ones (zod 4 tool schemas, the duplicate-@cendor/core trap, FoundryAdapter vs the M365 Agents SDK path). Check here before filing a bug about an API that "does not exist".
+  - name: Provider keys and per-provider setup
+    url: https://cendor.ai/docs/providers
+    about: Which environment variable each provider path reads, and which optional peer it needs. Most "no key found" and "provider not supported" reports are answered here.
+  - name: A bug in a library beneath the SDK (@cendor/* on npm)
+    url: https://github.com/cendorhq/cendor-libs-js/issues
+    about: "core, tokenguard, guardrails, acttrace, contextkit, squeeze, cassette — the SDK re-exports the real objects, so those bugs live upstream."
+  - name: Python SDK (cendor-sdk on PyPI)
+    url: https://github.com/cendorhq/cendor-sdk/issues
+    about: This repo is the TypeScript SDK. File Python bugs and requests on cendor-sdk. Versions are independent across languages; the parity matrix is the contract.
+  - name: Cookbook — copy-paste recipes
+    url: https://cendor.ai/cookbook
+    about: Every recipe runs offline with no API key, including a governed agent. The quickest way to get a working repro to attach to a bug report.
