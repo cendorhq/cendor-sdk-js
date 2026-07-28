@@ -7,7 +7,7 @@
 // TWO copies of core — which means TWO event buses. Cross-library cooperation then stops SILENTLY: a
 // guardrail decision emitted on bus A is never seen by the SDK listening on bus B. Measured live on
 // 2026-07-25 (@cendor/guardrails 0.7.6 pinned ^0.12.2 against an SDK on 0.15.0) and again on
-// 2026-07-26 in cendor-testsuits. Nothing failed loudly either time.
+// 2026-07-26 in a downstream consumer repo. Nothing failed loudly either time.
 //
 // This gate converts that silence into a red build. It is intentionally dependency-free and works for
 // both npm (nested node_modules) and pnpm (the .pnpm content-addressed store).
