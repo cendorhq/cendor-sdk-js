@@ -15,8 +15,9 @@ updates:
     groups:
       dev-dependencies:
         dependency-type: development
-    # Deferred majors — see plan/REPORT-TS7-OPENAI6-FEASIBILITY-2026-07-19.md §7.3.
-    # (openai and vitest are deliberately NOT ignored — handled as manual bumps.)
+    # Deferred majors. Each entry states its own reason and the condition that retires it — an ignore
+    # without one is indistinguishable from neglect. (openai and vitest are deliberately NOT ignored:
+    # they land as reviewed manual bumps.)
     ignore:
       # TS 7: revisit at 7.1 (new compiler API) after ecosystem soak.
       - dependency-name: "typescript"
@@ -30,6 +31,12 @@ updates:
       # biome 2: config-migration major — its own separate decision.
       - dependency-name: "@biomejs/biome"
         update-types: ["version-update:semver-major"]
-      # NOTE: the @anthropic-ai/sdk 0.x range hold that used to sit here was removed once its
-      # capture-impact study (plan/REPORT-ANTHROPIC-SDK-MAJOR-2026-07-19.md) cleared the bump —
-      # @anthropic-ai/sdk is now bumped to ^0.112.3 (cendor-sdk-js PR #17) and tracks normally.
+      # better-sqlite3 13+: crashes the Node 20 vitest workers — PR #22 was closed 2026-07-28 with its
+      # own run as the evidence (build-test (22) green, build-test (20) red); the sibling
+      # cendor-libs-js declined the identical bump in its PR #13 on 2026-07-24. The CI matrix covers
+      # Node 20, so stay on 12.x. REMOVE this ignore and take 13.x when Node 20 leaves the matrix.
+      - dependency-name: "better-sqlite3"
+        update-types: ["version-update:semver-major"]
+      # NOTE: the @anthropic-ai/sdk 0.x range hold that used to sit here was removed once a review of
+      # its capture impact cleared the bump — @anthropic-ai/sdk went to ^0.112.3 in PR #17 and now
+      # tracks normally.
