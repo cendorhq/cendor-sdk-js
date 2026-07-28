@@ -49,48 +49,33 @@ jobs:
   # JSDoc `@example` in source (Type Teach) against the real packages — tabs/examples that aren't
   # executed rot. The SDK's own `packages/sdk/src` @examples always run (checked vs the built dist);
   # cendor-libs-js source @examples run when that repo is checked out (below) via CENDOR_LIBS_JS.
-  # Needs DOCS_REPOS_TOKEN (a PAT with read access to cendorhq/cendor-libs, cendorhq/cendor-sdk, and
-  # cendorhq/cendor-libs-js) while those repos are private; the job skips itself when unset.
-  # After they go public, drop the token from the checkout steps.
+  # All three sibling repos are public since the 2026-07-29 flip, so they are checked out
+  # unauthenticated and this job ALWAYS runs. It previously self-skipped whenever DOCS_REPOS_TOKEN was
+  # unset — which meant a green run could prove nothing about the docs snippets at all.
   docs-snippets:
     runs-on: ubuntu-latest
     steps:
-      - name: Check for docs token
-        id: token
-        run: echo "have=${{ secrets.DOCS_REPOS_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: steps.token.outputs.have == 'true'
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: steps.token.outputs.have == 'true'
         with:
           repository: cendorhq/cendor-libs
-          token: ${{ secrets.DOCS_REPOS_TOKEN }}
           path: _siblings/cendor-libs
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: steps.token.outputs.have == 'true'
         with:
           repository: cendorhq/cendor-sdk
-          token: ${{ secrets.DOCS_REPOS_TOKEN }}
           path: _siblings/cendor-sdk
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: steps.token.outputs.have == 'true'
         with:
           repository: cendorhq/cendor-libs-js
-          token: ${{ secrets.DOCS_REPOS_TOKEN }}
           path: _siblings/cendor-libs-js
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
-        if: steps.token.outputs.have == 'true'
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        if: steps.token.outputs.have == 'true'
         with:
           node-version: 22
           cache: pnpm
-      - if: steps.token.outputs.have == 'true'
-        run: pnpm install --frozen-lockfile
-      - if: steps.token.outputs.have == 'true'
-        run: pnpm build
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
       - name: Typecheck docs snippets + source @examples
-        if: steps.token.outputs.have == 'true'
         env:
           DOCS_DIRS: ${{ github.workspace }}/_siblings/cendor-libs/docs:${{ github.workspace }}/_siblings/cendor-sdk/docs
           CENDOR_LIBS_JS: ${{ github.workspace }}/_siblings/cendor-libs-js
