@@ -244,7 +244,9 @@ The shared, searchable docs site (with a page-wide Python / TypeScript toggle):
 
 ## Develop
 
-A pnpm workspace with a single published package under [`packages/sdk`](packages/sdk):
+A pnpm workspace with two published packages: [`packages/sdk`](packages/sdk) (`@cendor/sdk`) and
+[`packages/init`](packages/init) (`@cendor/init`, the offline `init` / `doctor` CLI — optional dev
+tooling nothing depends on at runtime).
 
 ```bash
 pnpm install
@@ -257,8 +259,13 @@ pnpm check:docs  # typecheck every ```ts block in the docs trees against the bui
 
 `pnpm check:docs` extracts every TypeScript snippet from both docs trees and typechecks it against
 the real packages, so a breaking API change fails before release. Releases are driven by
-[changesets](https://github.com/changesets/changesets) — see [`PUBLISHING.md`](PUBLISHING.md). Publish
-with `pnpm publish` (rewrites `workspace:^` ranges), never `npm publish`.
+[changesets](https://github.com/changesets/changesets) — see [`PUBLISHING.md`](PUBLISHING.md), where
+publishing is gated on the same checks CI runs. Publish with `pnpm publish` (rewrites `workspace:^`
+ranges), never `npm publish`.
+
+Contributions welcome — [`CONTRIBUTING.md`](CONTRIBUTING.md) has the setup and the exact gates to run
+before a PR, and [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) applies. Found a security problem? Please
+don't open a public issue — see [`SECURITY.md`](SECURITY.md).
 
 ## License & disclaimer
 
