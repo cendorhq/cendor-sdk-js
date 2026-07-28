@@ -10,9 +10,9 @@
     "@cendor/cassette": "3.0.0",
     "@cendor/acttrace": "3.1.0",
     "@cendor/libs": "3.0.0",
-    "@cendor/sdk": "3.0.2",
+    "@cendor/sdk": "3.0.3",
     "@cendor/mcp": "0.1.7",
-    "@cendor/init": "0.4.0"
+    "@cendor/init": "0.4.1"
   },
   "pypi": {
     "cendor-core": "1.14.2",
