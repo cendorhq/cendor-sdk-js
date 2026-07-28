@@ -1,5 +1,7 @@
 # @cendor/init
 
+[![npm version](https://img.shields.io/npm/v/@cendor/init.svg)](https://www.npmjs.com/package/@cendor/init) [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+
 **One command to make your project Cendor-ready and Cendor-fluent for your AI assistant** — plus a
 `doctor` that catches the wiring mistakes before they bite. Offline: no network, no API key.
 

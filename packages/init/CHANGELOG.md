@@ -25,6 +25,19 @@
   The bundled versions snapshot is now **generated** from the site's single version source rather than
   hand-synced, and carries the 2026-07-27 shelf.
 
+## 0.3.0
+
+**Never published — this version does not exist on npm.** `npm view @cendor/init versions` goes
+`0.2.2` → `0.4.0`, and no `@cendor/init@0.3.0` tag was ever cut.
+
+`0.3.0` was written by hand into `packages/init/package.json` (`2f709ed`, "release(init):
+@cendor/init 0.3.0 — doctor `--online` + lockfile detection") while the changeset describing that
+same work was still pending. Versions here are owned by changesets, so the release run applied the
+pending **minor** on top of the hand-written `0.3.0` and published **0.4.0** instead.
+
+Nothing was lost: every change meant for `0.3.0` — `doctor --online`, lockfile detection, and the
+generated versions snapshot — shipped in [0.4.0](#040) above, whose entry is that changeset.
+
 ## 0.2.2
 
 ### Patch Changes
