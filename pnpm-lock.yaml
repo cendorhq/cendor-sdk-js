@@ -57,8 +57,8 @@ importers:
   packages/sdk:
     dependencies:
       '@cendor/acttrace':
-        specifier: ^3.0.0
-        version: 3.0.0(@opentelemetry/api@1.9.1)
+        specifier: ^3.1.0
+        version: 3.1.0(@opentelemetry/api@1.9.1)
       '@cendor/cassette':
         specifier: ^3.0.0
         version: 3.0.0(@opentelemetry/api@1.9.1)
@@ -163,8 +163,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@cendor/acttrace@3.0.0':
-    resolution: {integrity: sha512-jiiUSzSBptU9Ge3Zi7feLnbAKhCnPILBeiahaa5g4uGnR+u48ekB4YenTIkSvn66Q59QJYSV/mdstsRrCvISHQ==}
+  '@cendor/acttrace@3.1.0':
+    resolution: {integrity: sha512-i04MQoCgkYk/ZqVucGxYeth4oe5PabRUBIXF5Znq4FvndTNeRAO8F9a+aqeYGqYKU5HGcyGf1/eIJjQTPU93SA==}
     engines: {node: '>=18'}
     hasBin: true
     peerDependencies:
@@ -1567,7 +1567,7 @@ snapshots:
   '@biomejs/cli-win32-x64@1.9.4':
     optional: true
 
-  '@cendor/acttrace@3.0.0(@opentelemetry/api@1.9.1)':
+  '@cendor/acttrace@3.1.0(@opentelemetry/api@1.9.1)':
     dependencies:
       '@cendor/core': 3.0.0(@opentelemetry/api@1.9.1)
     optionalDependencies:
