@@ -5,22 +5,51 @@
   </picture>
 </p>
 
-**A governed agent in ~10 lines — cost budgets, tamper-evident audit, and PII redaction built in.**
+<!-- The header block is centred as one unit, to line up with the banner above. That means HTML, not
+     markdown: GitHub does not process markdown inside an HTML block, so `**bold**` and `[a](b)` would
+     render literally inside a <p align="center">. Verified against the GitHub markdown API. -->
 
-A thin, model-agnostic agent SDK where governance is the *foundation*, not a plugin. The TypeScript/JavaScript port of [`cendor-sdk`](https://github.com/cendorhq/cendor-sdk).
+<p align="center">
+  <strong>A governed agent in ~10 lines — cost budgets, tamper-evident audit, and PII redaction built in.</strong>
+</p>
 
-[![npm: @cendor/sdk](https://img.shields.io/npm/v/@cendor/sdk.svg?label=%40cendor%2Fsdk)](https://www.npmjs.com/package/@cendor/sdk) ![Node](https://img.shields.io/badge/node-%E2%89%A520-blue) ![License](https://img.shields.io/badge/license-Apache_2.0-blue) ![module: ESM](https://img.shields.io/badge/module-ESM-blue) ![types: TypeScript](https://img.shields.io/badge/types-TypeScript-blue) [![Biome](https://img.shields.io/badge/lint-biome-60a5fa)](https://biomejs.dev) [![CI](https://github.com/cendorhq/cendor-sdk-js/actions/workflows/ci.yml/badge.svg)](https://github.com/cendorhq/cendor-sdk-js/actions/workflows/ci.yml)
+<p align="center">
+  A thin, model-agnostic agent SDK where governance is the <em>foundation</em>, not a plugin. The
+  TypeScript/JavaScript port of <a href="https://github.com/cendorhq/cendor-sdk"><code>cendor-sdk</code></a>.
+</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/@cendor/sdk"><img alt="npm: @cendor/sdk" src="https://img.shields.io/npm/v/@cendor/sdk.svg?label=%40cendor%2Fsdk"></a>
+  <a href="https://github.com/cendorhq/cendor-sdk-js/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/cendorhq/cendor-sdk-js/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="Node" src="https://img.shields.io/badge/node-%E2%89%A520-blue">
+  <img alt="License" src="https://img.shields.io/badge/license-Apache_2.0-blue">
+  <img alt="module: ESM" src="https://img.shields.io/badge/module-ESM-blue">
+  <img alt="types: TypeScript" src="https://img.shields.io/badge/types-TypeScript-blue">
+  <a href="https://biomejs.dev"><img alt="Biome" src="https://img.shields.io/badge/lint-biome-60a5fa"></a>
+</p>
 
 <!-- cendor:downloads:start — self-hosted badges from cendor.ai (no third party in the render path).
      The numbers live inside the SVGs, regenerated daily from the committed ledger, so this file
      never goes stale. PyPI excludes index mirrors; npm publishes no mirror filter, which is why the
      two are shown separately and never summed. Method: https://cendor.ai/downloads -->
-[![npm · @cendor/sdk](https://cendor.ai/badge/downloads/cendor-sdk-js.svg)](https://cendor.ai/downloads) [![all Cendor · npm](https://cendor.ai/badge/downloads/npm.svg)](https://cendor.ai/downloads) [![all Cendor · PyPI](https://cendor.ai/badge/downloads/pypi.svg)](https://cendor.ai/downloads)
+<p align="center">
+  <a href="https://cendor.ai/downloads"><img alt="npm · @cendor/sdk" src="https://cendor.ai/badge/downloads/cendor-sdk-js.svg"></a>
+  <a href="https://cendor.ai/downloads"><img alt="all Cendor · npm" src="https://cendor.ai/badge/downloads/npm.svg"></a>
+  <a href="https://cendor.ai/downloads"><img alt="all Cendor · PyPI" src="https://cendor.ai/badge/downloads/pypi.svg"></a>
+</p>
 <!-- cendor:downloads:end -->
 
-[**Install**](#install) · [**Governed in 10 lines**](#a-governed-agent-in-10-lines) · [**Why different**](#why-its-different) · [**Providers**](#every-major-provider--one-canonical-loop) · [**Docs**](https://cendor.ai/docs/sdk/getting-started)
+<p align="center">
+  <a href="#install"><strong>Install</strong></a> ·
+  <a href="#a-governed-agent-in-10-lines"><strong>Governed in 10 lines</strong></a> ·
+  <a href="#why-its-different"><strong>Why different</strong></a> ·
+  <a href="#every-major-provider--one-canonical-loop"><strong>Providers</strong></a> ·
+  <a href="https://cendor.ai/docs/sdk/getting-started"><strong>Docs</strong></a>
+</p>
 
-*model-agnostic · ESM-only · local-first · offline by default*
+<p align="center">
+  <em>model-agnostic · ESM-only · local-first · offline by default</em>
+</p>
 
 Using an AI coding assistant? `npx @cendor/init` (TS) / `uvx cendor-init` (Python) wires it up — or point it at [cendor.ai/docs/for-ai-assistants](https://cendor.ai/docs/for-ai-assistants).
 
