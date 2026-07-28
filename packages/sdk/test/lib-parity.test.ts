@@ -1,6 +1,5 @@
 /**
- * SDK↔lib surface-parity + identity pins (W2, plan/PLAN-SDK-LIB-INHERITANCE.md). The TS twin of
- * cendor-sdk's tests/test_lib_parity.py.
+ * SDK↔lib surface-parity + identity pins. The TS twin of cendor-sdk's tests/test_lib_parity.py.
  *
  * Makes inheritance drift LOUD instead of silent: every re-export the docs call "the identical
  * library object" is pinned with `Object.is`; the `sdk.rules` namespace is diffed against the

@@ -1,10 +1,10 @@
 name: Pin bump
 
-# D2 (plan/PLAN-SDK-LIB-INHERITANCE.md): on npm, a 0.x caret never crosses a minor — so every
-# @cendor/* lib minor needs a coordinated @cendor/sdk pin bump or SDK installs silently stay a
-# minor behind (the M6 class). This workflow detects the lag daily and OPENS A PR with the bump +
-# a patch changeset. It NEVER merges: while these repos are private, push-to-main auto-publishes —
-# merging the PR IS the release, and that stays a human decision.
+# On npm, a 0.x caret never crosses a minor — so every @cendor/* library minor needs a coordinated
+# @cendor/sdk pin bump, or `npm i @cendor/sdk` silently keeps resolving a minor-old library and the
+# build stays green while it does. This workflow detects that lag daily and OPENS A PR with the bump +
+# a patch changeset. It NEVER merges: a push to main runs `changeset publish`, so merging the PR IS
+# the release, and that stays a human decision.
 
 on:
   schedule:
@@ -103,4 +103,4 @@ jobs:
           git push -u origin pin-bump
           gh pr create \
             --title "chore: bump @cendor/* pins to the latest shelf" \
-            --body "$(printf 'Automated pin bump (pin-bump.yml). The declared ranges no longer reach the latest published versions:\n\n%s\n⚠️ **Merging this PR publishes @cendor/sdk** — while the repos are private, push-to-main runs changeset publish. Review, run the suite, then merge deliberately.' "$SUMMARY")"
+            --body "$(printf 'Automated pin bump (pin-bump.yml). The declared ranges no longer reach the latest published versions:\n\n%s\n⚠️ **Merging this PR publishes @cendor/sdk** — a push to main runs changeset publish. Review, run the suite, then merge deliberately.' "$SUMMARY")"

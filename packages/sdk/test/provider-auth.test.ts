@@ -1,5 +1,5 @@
 /**
- * Provider-auth hardening (PLAN-SDK-KEYS-PHASE2 N1–N2) — fake, provider-shaped clients, no network.
+ * Provider-auth hardening — fake, provider-shaped clients, no network.
  *
  * N1: a live 401 while the keyless *placeholder* is in play becomes a `MissingAPIKeyError` naming the
  * env var to set — and never fires with a real key, on non-auth errors, or on keyless success. N2:

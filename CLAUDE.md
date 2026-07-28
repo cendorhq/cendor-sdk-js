@@ -10,8 +10,9 @@ them.
 
 1. **A MAJOR bump needs Raghav's explicit approval. Never autonomous.** Propose it, say what breaks,
    wait. **Minor and patch need no approval** — ship them. Enforced by
-   `node scripts/check-major-bump.mjs` (in CI and in `verify-hold`), which reads an in-band
-   `Approved-Major:` line in the changeset, or an `APPROVED-MAJOR` file listing the exact version.
+   `node scripts/check-major-bump.mjs` (run by CI here, and by the maintainer's cross-repo pre-push
+   check), which reads an in-band `Approved-Major:` line in the changeset, or an `APPROVED-MAJOR`
+   file listing the exact version.
 2. **All libraries in one language share ONE major** — `@cendor/*` move together, `cendor-*` move
    together. Minors and patches stay independent per package.
 3. **Majors are NOT coupled across languages.** The parity matrix is the contract, not matching

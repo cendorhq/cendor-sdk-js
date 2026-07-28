@@ -17,7 +17,10 @@
  * Uses global `fetch` (Node 18+, which this package already requires) — no dependency added.
  */
 
-/** The live feed. Kept in step with cendor-site/src/pages/releases.json.ts. */
+/**
+ * The live feed. Its field shape is a stable contract — fields are added, never renamed or removed —
+ * so an older pinned CLI keeps reading it.
+ */
 export const RELEASES_URL = 'https://cendor.ai/releases.json';
 
 /** Short by design — a version check must never be the reason a CI job hangs. */
