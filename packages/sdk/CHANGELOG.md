@@ -1,5 +1,82 @@
 # @cendor/sdk
 
+## 3.0.2
+
+### Patch Changes
+
+- 7d1d804: `Agent({ outputType })` and tool declarations no longer send Gemini a JSON-Schema key its API rejects.
+
+  The Gemini `Schema` proto does not model `additionalProperties`, and the SDK deliberately stamps
+  `additionalProperties: false` onto every object node (zod 4 omits it under `io: 'input'`). `@google/genai`
+  does strip that key itself — **but only while recursing `properties` / `items` / `anyOf`**. A
+  `prefixItems` subtree (a zod tuple) or a `$defs` subtree is copied to the wire verbatim, so the key
+  reached the Gemini Developer API and it answered 400 `INVALID_ARGUMENT`. Measured against
+  `@google/genai` 2.13.0 with the network mocked, so a schema-level assertion could not miss it:
+
+  ```
+  "responseSchema":{"type":"OBJECT","properties":{"tup":{"type":"ARRAY",
+    "prefixItems":[{ … "additionalProperties":false}]}}}
+  ```
+
+  `config.responseSchema` and `Tool.toGemini()`'s `parameters` now go through one sanitizer, so the two
+  cannot drift. It returns a new structure — a caller's schema object (and the public `Tool.parameters`
+  field) is never mutated. Also dropped: `additional_properties`, google-genai's own snake_case spelling
+  of the same field, which the TS client forwards verbatim because it only knows the camelCase name; and
+  `title` / `default`, which the proto does accept but which `cendor-sdk` drops, for cross-language
+  parity — both are hints, not constraints.
+
+  `$defs` / `$ref` are deliberately **kept**: dropping half the pair breaks a nested model outright. So is
+  `$schema` — `@google/genai` re-routes a `$schema`-bearing schema to the permissive `responseJsonSchema`
+  field, where full JSON Schema is legal, so stripping it would _downgrade_ a working request onto the
+  strict proto. That is the one place this diverges from the Python fix, which can drop `$schema` because
+  its client inlines `$defs` first. Keys inside `properties` / `$defs` are user data, so a field genuinely
+  named `title` or `default` still survives.
+
+  Mirrors the `cendor-sdk` fix so the two languages agree (severity high — structured output on Gemini
+  did not work).
+
+- 5396398: A cross-provider handoff into a Gemini 3 agent no longer 400s on a missing `thought_signature`.
+
+  Gemini 3.x rejects a replayed `functionCall` that carries no `thoughtSignature` (400, "missing
+  thought*signature"). A handoff replays the *supervisor's* history into the receiving agent — an OpenAI
+  supervisor's `transfer_to*\*` call, plus any real tool it called first — and none of those ever had a
+  signature, so the receiving Gemini agent could not make its first call.
+
+  **Nothing is fabricated.** A thought signature is an opaque token Google issues over **Gemini's own**
+  reasoning for that context; minting one would misrepresent provenance and be rejected as invalid
+  anyway. Instead the foreign turn is re-emitted as a text part stating the call, and its matching
+  `functionResponse` follows as text — the same information in a shape the API always accepts.
+
+  The scope is deliberately narrow, so Gemini's own tool loops are unchanged:
+
+  - only for models that validate signatures — `gemini-3` and later; 2.x and 1.5 never did, and their
+    payload is byte-identical to before;
+  - only for a model turn where **not one** function-call part carries a signature. A turn with at least
+    one signature came from Gemini itself (a parallel-call turn signs only the first part) and is
+    replayed verbatim, signature included.
+
+  Found by the external black-box suite driving a live Gemini key (severity medium). The companion
+  finding on that scenario — Anthropic validating a foreign `tool_use.id` against `^[a-zA-Z0-9_-]+$` — is
+  untouched here.
+
+- e971dcb: `loadMcpResources` returns the resource body instead of `"[object Object]"`.
+
+  An MCP _resource read_ body rides `contents[].text` (`ReadResourceResult`), not the `content[].text` of
+  a tool-call result. The loader fed the read result to the tool-result extractor, which recognized
+  neither key and fell through to `String(result)` — so every resource collapsed to the literal string
+  `"[object Object]"`, and any agent handed one got no content at all.
+
+  Resource reads now have their own extractor:
+
+  - every text entry is joined with `\n` (so a multi-part resource keeps all of it);
+  - an empty `contents` list is `''`;
+  - a `BlobResourceContents` entry contributes nothing — this function's contract is the resource's
+    _text_, and base64 bytes are not text to hand a model;
+  - any other shape still falls back to the tool-result extractor, so a non-spec server behaves exactly
+    as before.
+
+  Found by the external black-box suite driving live MCP servers (severity medium).
+
 ## 3.0.1
 
 ### Patch Changes
