@@ -2,12 +2,22 @@
 // GATE G1 — exactly ONE @cendor/core must be installed.
 //
 // WHY
-// Every @cendor/* sibling declares `@cendor/core` with a caret. At 0.x a caret never crosses a minor,
-// so the moment one package pins ^0.16 while another still pins ^0.15, the package manager installs
-// TWO copies of core — which means TWO event buses. Cross-library cooperation then stops SILENTLY: a
-// guardrail decision emitted on bus A is never seen by the SDK listening on bus B. Measured live on
-// 2026-07-25 (@cendor/guardrails 0.7.6 pinned ^0.12.2 against an SDK on 0.15.0) and again on
-// 2026-07-26 in a downstream consumer repo. Nothing failed loudly either time.
+// Every @cendor/* sibling declares `@cendor/core` with a caret, and two resolved copies of core means
+// TWO event buses. Cross-library cooperation then stops SILENTLY: a guardrail decision emitted on bus
+// A is never seen by the SDK listening on bus B. Nothing fails loudly.
+//
+// The @cendor/* family is on major 3 now, where a caret spans the WHOLE major — so `^3.0.0` and
+// `^3.1.0` both resolve to the same newest 3.x and the pre-1.0 fragmentation this gate was written for
+// cannot recur by that route. It is kept, and still runs, because the failure mode has three other
+// routes that a shared major does not close: a pin that crosses a major (^3 beside ^4 during a
+// migration), an exact or narrow-range pin somewhere in the tree, and a lockfile or nested install
+// that resolves two copies anyway. The gate asserts the END STATE — one installed core — rather than
+// any particular cause of a second one.
+//
+// History, for why the end state is worth a gate at all: measured live on 2026-07-25
+// (@cendor/guardrails 0.7.6 pinned ^0.12.2 against an SDK on 0.15.0) and again on 2026-07-26 in a
+// downstream consumer repo. At 0.x a caret never crossed a minor, so every core minor fragmented the
+// family until each sibling was republished.
 //
 // This gate converts that silence into a red build. It is intentionally dependency-free and works for
 // both npm (nested node_modules) and pnpm (the .pnpm content-addressed store).
