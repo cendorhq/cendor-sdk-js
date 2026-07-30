@@ -1,9 +1,9 @@
 {
   "_comment": "GENERATED — do not hand-edit; a maintainer regenerates it from Cendor’s single version source, and a hand edit is overwritten. `doctor` reads this OFFLINE to decide whether an installed cendor/@cendor package is behind. It is only a hint — the live source of truth is https://cendor.ai/releases.json (see `doctor --online`).",
-  "asOf": "2026-07-28",
+  "asOf": "2026-07-31",
   "npm": {
     "@cendor/core": "3.0.1",
-    "@cendor/tokenguard": "3.0.0",
+    "@cendor/tokenguard": "3.0.1",
     "@cendor/guardrails": "3.0.0",
     "@cendor/contextkit": "3.0.1",
     "@cendor/squeeze": "3.0.0",
@@ -16,7 +16,7 @@
   },
   "pypi": {
     "cendor-core": "1.14.2",
-    "cendor-tokenguard": "1.6.1",
+    "cendor-tokenguard": "1.6.2",
     "cendor-guardrails": "1.6.1",
     "cendor-contextkit": "1.0.3",
     "cendor-squeeze": "1.1.1",
