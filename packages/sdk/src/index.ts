@@ -52,7 +52,7 @@ export {
 } from './memory.js';
 export type { SessionStore, Summarizer } from './memory.js';
 
-export { RetryPolicy, callWithRetry, defaultIsTransient } from './resilience.js';
+export { RetryPolicy, callModel, callWithRetry, defaultIsTransient } from './resilience.js';
 export type { RetryPolicyOptions } from './resilience.js';
 
 export {

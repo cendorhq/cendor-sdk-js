@@ -18,7 +18,7 @@ import { withConversation, withScope } from './governance.js';
 import { autoScopeStream, withAutoRunScope, withLiveRootActive } from './otel.js';
 import { type Provider, assistantMessage, toolResultMessage } from './providers.js';
 import { formatContext } from './rag.js';
-import { type RetryPolicy, callWithRetry } from './resilience.js';
+import { type RetryPolicy, callModel } from './resilience.js';
 import { type JsonSchema, type Tool, zodSchemaToJson } from './tools.js';
 import {
   type Message,
@@ -380,7 +380,7 @@ export async function agentLoop(
   for (let turn = 0; turn < cfg.maxTurns; turn++) {
     const wire = await assemble(agent, messages);
     const kwargs = buildKwargsWith(agent, wire, cfg.toolset, provider);
-    const response = await callWithRetry(() => cfg.create(kwargs), cfg.retry);
+    const response = await callModel(cfg.create, kwargs, cfg.retry);
     const parsed = provider.parse(response);
     if (gatePromise !== null) {
       await gatePromise; // parallel mode: join the input gate (a block throws here, post-call)
@@ -478,7 +478,11 @@ export async function streamSegment(
     const kwargs = buildKwargsWith(agent, wire, cfg.toolset, provider);
     let parsed: ParsedResponse;
     if (provider.supportsStream) {
-      const stream = (await cfg.create({ ...kwargs, stream: true })) as AsyncIterable<unknown>;
+      const stream = (await callModel(
+        cfg.create,
+        { ...kwargs, stream: true },
+        null,
+      )) as AsyncIterable<unknown>;
       const chunks: unknown[] = [];
       let buffered = '';
       let checked = 0;
@@ -501,7 +505,7 @@ export async function streamSegment(
       }
       parsed = provider.parseStream(chunks);
     } else {
-      const response = await cfg.create(kwargs);
+      const response = await callModel(cfg.create, kwargs, null);
       parsed = provider.parse(response);
       if (parsed.content) emit(new TextDelta(parsed.content));
     }

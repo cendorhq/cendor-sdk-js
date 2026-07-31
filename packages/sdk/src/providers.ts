@@ -1416,6 +1416,13 @@ export function azureFoundryBaseUrl(opts: { baseUrl?: string | null }): string |
     raw.includes('.cognitiveservices.azure.com')
   )
     return `${raw}/openai/v1/`;
+  // A Foundry **project** endpoint (`…/api/projects/<name>`) — the value the portal shows and the
+  // one `@azure/ai-projects` is constructed with — also takes `/openai/v1/`. Measured live
+  // 2026-07-31: `<project>/openai/v1/` serves Chat Completions (it is exactly what
+  // `AIProjectClient.getOpenAIClient()` builds), while the bare project endpoint answers
+  // `400 Missing required query parameter: api-version` — an error that reads like "go back to the
+  // legacy client" and is not. Matched on the path, so a sovereign/private host is covered too.
+  if (/\/api\/projects\/[^/]+$/.test(raw)) return `${raw}/openai/v1/`;
   return `${raw}/`;
 }
 
