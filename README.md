@@ -178,15 +178,15 @@ canonical shape, so a run can **hand off between providers** without rewriting i
 | **AWS Bedrock** | Converse API | `@aws-sdk/client-bedrock-runtime` |
 | **Ollama** | local models | `ollama` |
 | **Hugging Face** | Inference / endpoints | `@huggingface/inference` |
-| **Azure AI Foundry** | deployments via the OpenAI v1 endpoint (Chat + Responses) | `openai` |
+| **Microsoft Foundry** (formerly Azure AI Foundry) | deployments via the OpenAI v1 endpoint (Chat + Responses) | `openai` |
 | **Foundry Local** | on-device, OpenAI-compatible | `openai` |
 
 > **Azure keyless auth:** pass `azureADTokenProvider` (an async `() => Promise<string>` token callback)
-> on the agent or client options instead of an API key to authenticate against Azure AI Foundry with
+> on the agent or client options instead of an API key to authenticate against Microsoft Foundry with
 > Microsoft Entra ID — the token is refreshed per request.
 
 > **Automatic token/cost capture is live for every provider** — OpenAI (Chat + Responses),
-> Anthropic, Gemini, Bedrock, Ollama, Hugging Face, Azure AI Foundry (Chat + Responses), and Foundry
+> Anthropic, Gemini, Bedrock, Ollama, Hugging Face, Microsoft Foundry (Chat + Responses), and Foundry
 > Local. The installed `@cendor/core`'s `instrument()` detects each client and records usage/cost on
 > the bus (Hugging Face / Ollama / Gemini / Bedrock-converse shipped in `@cendor/core` 0.3.0; this
 > package pins the current line — that release is from core's pre-1.0 series, not the `3.x` line you

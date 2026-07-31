@@ -1,7 +1,7 @@
 /**
  * Foundry adapter — the TS port of `cendor.sdk.foundry`. A dependency-free adapter over the Bot
  * Framework **Activity** protocol (the messaging surface a custom-engine agent exposes to Copilot /
- * Teams / Azure AI Foundry). `onActivity` takes an inbound `message` Activity, runs the governed agent,
+ * Teams / Microsoft Foundry). `onActivity` takes an inbound `message` Activity, runs the governed agent,
  * and returns an outbound Activity (carrying governance metadata: trace id + cost). Because TS
  * `run(...)` is async, `onActivity` is async. Wire it into your web endpoint of choice.
  */

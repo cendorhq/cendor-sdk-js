@@ -2,7 +2,8 @@
  * Providers — the TS port of `cendor.sdk.providers`. The runner keeps history in ONE canonical shape
  * (OpenAI Chat messages) with the system prompt kept OUT of the list; each provider translates
  * canonical → its wire form. OpenAI (Chat + Responses), Anthropic, Gemini, Bedrock, Ollama, Hugging
- * Face, Azure AI Foundry (Chat + Responses) and Foundry Local are all ported. Client construction for
+ * Face, Microsoft Foundry (formerly Azure AI Foundry; Chat + Responses) and Foundry Local are all
+ * ported. Client construction for
  * the non-OpenAI/Anthropic backends is lazy (their SDK is `require`d only when a client is built).
  *
  * Usage/cost is captured by the installed `@cendor/core`'s `instrument()` → bus, not here. Core
@@ -1398,9 +1399,9 @@ export class HuggingFaceProvider extends OpenAIChatProvider {
   }
 }
 
-// --------------------------------------------------------------------------- Azure AI Foundry
+// ----------------------------------------------------------------------- Microsoft Foundry
 
-/** Resolve (and normalize) the Azure AI Foundry OpenAI-v1 `base_url`. */
+/** Resolve (and normalize) the Microsoft Foundry OpenAI-v1 `base_url`. */
 export function azureFoundryBaseUrl(opts: { baseUrl?: string | null }): string | null {
   let raw =
     opts.baseUrl ||
@@ -1427,7 +1428,7 @@ export function azureFoundryBaseUrl(opts: { baseUrl?: string | null }): string |
 }
 
 /**
- * Azure AI Foundry via the OpenAI-compatible `/openai/v1/` endpoint — {@link OpenAIChatProvider} with
+ * Microsoft Foundry via the OpenAI-compatible `/openai/v1/` endpoint — {@link OpenAIChatProvider} with
  * Foundry-aware client construction. `model` is your Foundry deployment name; `baseUrl` the Foundry
  * endpoint (also read from `AZURE_OPENAI_ENDPOINT`); `apiKey` the resource key. Detected by
  * `@cendor/core` as OpenAI (it *is* the `openai` SDK), so governance rides the same seams.
@@ -1470,7 +1471,7 @@ export class AzureFoundryProvider extends OpenAIChatProvider {
   }
 }
 
-/** Azure AI Foundry via the OpenAI **Responses** API — same client construction, Responses surface. */
+/** Microsoft Foundry via the OpenAI **Responses** API — same client construction, Responses surface. */
 export class AzureFoundryResponsesProvider extends OpenAIResponsesProvider {
   override readonly name: string = 'azure_responses';
   protected override readonly keyEnvVar: string | null = 'AZURE_OPENAI_API_KEY';
@@ -1511,7 +1512,7 @@ export class FoundryLocalProvider extends OpenAIChatProvider {
       throw new Error(
         'Foundry Local needs an endpoint: pass baseUrl=... on the Agent or set ' +
           'FOUNDRY_LOCAL_ENDPOINT (e.g. foundry_local.FoundryLocalManager(alias).endpoint). ' +
-          'See docs/sdk.md → Connecting to Hugging Face & Azure AI Foundry.',
+          'See docs/sdk.md → Connecting to Hugging Face & Microsoft Foundry.',
       );
     }
     const apiKey = opts.apiKey ?? process.env.FOUNDRY_LOCAL_API_KEY ?? 'none';

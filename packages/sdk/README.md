@@ -47,10 +47,11 @@ emits into **your** provider.
 - **Agent loop** — `run(agent, input, opts)` (async), tool calling, `maxTurns`, structured output
   (`outputType` as a zod schema or JSON-schema object), `Result`/`Step` with aggregate `usage`/`cost`.
 - **Providers** — OpenAI (Chat Completions + Responses), Anthropic, Google Gemini, AWS Bedrock,
-  Ollama, Hugging Face, and Azure AI Foundry (chat + responses) + Foundry Local, driven through the
-  real SDKs (`instrument()`ed); provider inferred from the model id, or pass a pre-built `client`.
-  Token/cost is captured end-to-end for every provider by the installed `@cendor/core`'s
-  `instrument()` — no per-provider wiring, and no provider left to a future release.
+  Ollama, Hugging Face, and Microsoft Foundry (formerly Azure AI Foundry; chat + responses) +
+  Foundry Local, driven through the real SDKs (`instrument()`ed); provider inferred from the model
+  id, or pass a pre-built `client`. Token/cost is captured end-to-end for every provider by the
+  installed `@cendor/core`'s `instrument()` — no per-provider wiring, and no provider left to a
+  future release.
 - **Tools via zod** — `tool(fn, { parameters: z.object({...}) })` → each provider's native tool shape.
 - **Governance** (the identical re-exported libraries — CI-pinned since 0.10.0, incl. `guard`) — `budget`/`withBudget`, `track`, `report`, `guard`,
   `AuditLog`/`verify`, `registerModelPrice`, `BudgetExceeded`. A bare `run()` needs none of it.
