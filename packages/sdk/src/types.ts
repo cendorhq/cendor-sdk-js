@@ -52,6 +52,84 @@ export class Step {
   }
 }
 
+/**
+ * The marker the loop puts in front of a failed tool's result before handing it to the model.
+ * The string the MODEL sees is a deliberate contract (it is how the model learns to recover) and is
+ * never changed — this constant just gives the one place that defines it a name.
+ */
+export const TOOL_ERROR_PREFIX = '[error] ';
+
+/**
+ * Whether a tool result is the loop's own failure marker.
+ *
+ * The single definition of "this tool failed", shared by {@link Result.toolErrors} and the
+ * `cendor.tool.outcome` span attribute (`otel.toolOutcome`) so the two can never disagree.
+ *
+ * Honest limit: a tool whose *own* output begins with `"[error] "` is indistinguishable from a
+ * failure. That is not new — the span attribute has classified on this prefix since it shipped — and
+ * it is why the marker is a constant here rather than a literal in two files.
+ *
+ * @example
+ * ```ts
+ * import { isToolError } from '@cendor/sdk';
+ * const toolResult: unknown = '[error] TypeError: boom';
+ * if (isToolError(toolResult)) console.warn('that tool raised');
+ * ```
+ */
+export function isToolError(result: unknown): boolean {
+  return typeof result === 'string' && result.startsWith(TOOL_ERROR_PREFIX);
+}
+
+/**
+ * One tool execution that raised, in structured form.
+ *
+ * `run()` keeps the loop alive when a tool throws: the error becomes a `"[error] <Name>: <message>"`
+ * string, the model is shown it, and the conversation continues. That is the right behaviour — but it
+ * left the *caller* with nothing to branch on except string matching. This is that failure, typed.
+ *
+ * @example
+ * ```ts
+ * import { run } from '@cendor/sdk';
+ * const result = await run(agent, 'refund order 42');
+ * if (result.toolFailed) for (const e of result.toolErrors) console.warn(e.tool, e.type, e.message);
+ * ```
+ */
+export interface ToolError {
+  /** The tool that threw — or the name the model asked for, when no such tool exists. */
+  tool: string;
+  /**
+   * The error's constructor name (`"TypeError"`), or `"UnknownTool"` when the model named a tool the
+   * agent does not have. Empty only when the message carried no recognizable `Name: message` split.
+   */
+  type: string;
+  /** The error message, exactly as the model was shown it. */
+  message: string;
+  /** The provider's id for the call this failure answers, for correlation. Empty if omitted. */
+  toolCallId: string;
+}
+
+const UNKNOWN_TOOL_MARKER = 'unknown tool: ';
+
+/**
+ * Split the loop's own marker string back into its parts. Safe because this parses a string *this
+ * package wrote* (`runner.errString`), not provider text.
+ */
+function parseToolError(content: string, tool: string, toolCallId: string): ToolError {
+  const body = content.slice(TOOL_ERROR_PREFIX.length);
+  if (body.startsWith(UNKNOWN_TOOL_MARKER)) {
+    return {
+      tool: body.slice(UNKNOWN_TOOL_MARKER.length).trim() || tool,
+      type: 'UnknownTool',
+      message: body,
+      toolCallId,
+    };
+  }
+  const at = body.indexOf(': ');
+  // No separator — keep the whole body as the message rather than inventing a type.
+  if (at < 0) return { tool, type: '', message: body, toolCallId };
+  return { tool, type: body.slice(0, at), message: body.slice(at + 2), toolCallId };
+}
+
 export interface ResultInit {
   output: unknown;
   steps?: Step[];
@@ -100,6 +178,49 @@ export class Result {
   get toolSteps(): Step[] {
     return this.steps.filter((s) => s.kind === 'tool');
   }
+  /**
+   * Every tool execution that threw during this run, typed, in order.
+   *
+   * A throwing tool does not stop the run — the loop hands the model `"[error] <Name>: <message>"`
+   * and keeps going — and it emits **no** `ToolCall` on the bus (core's tool wrapper does not catch),
+   * so a failed tool appears in neither {@link steps} nor {@link toolSteps}. Before this getter the
+   * only machine-readable trace of a tool failure was that string prefix inside {@link messages},
+   * which callers had to match by hand.
+   *
+   * Derived from {@link messages} rather than recorded separately, deliberately: the messages are
+   * what the model actually saw and what a checkpoint persists, so a **resumed** run reports its
+   * earlier tool failures too, and there is no second copy of the truth to drift.
+   *
+   * See {@link isToolError} for the one honest limit.
+   *
+   * @example
+   * ```ts
+   * import { run } from '@cendor/sdk';
+   * const result = await run(agent, 'refund order 42');
+   * if (result.toolFailed) console.warn(result.toolErrors.map((e) => e.type).join(', '));
+   * ```
+   */
+  get toolErrors(): ToolError[] {
+    const out: ToolError[] = [];
+    for (const m of this.messages) {
+      if (m.role !== 'tool') continue;
+      const content = m.content;
+      if (!isToolError(content)) continue;
+      out.push(
+        parseToolError(content as string, String(m.name ?? ''), String(m.tool_call_id ?? '')),
+      );
+    }
+    return out;
+  }
+
+  /**
+   * True if any tool threw during the run. A guardrail *block* is not a failure — it is a decision,
+   * and lands in {@link guardrailDecisions} instead.
+   */
+  get toolFailed(): boolean {
+    return this.toolErrors.length > 0;
+  }
+
   get finalMessage(): Message | null {
     for (let i = this.messages.length - 1; i >= 0; i--) {
       const m = this.messages[i]!;

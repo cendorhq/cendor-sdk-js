@@ -14,6 +14,7 @@ import {
   toolSource,
 } from './_telemetry.js';
 import { currentAgent, currentAgentId, currentConversation } from './governance.js';
+import { isToolError } from './types.js';
 import type { Result, Step } from './types.js';
 
 const require = createRequire(import.meta.url);
@@ -254,11 +255,20 @@ function toolSourceAttrs(name: string): Record<string, string> {
   return attrs;
 }
 
-/** A tool call's outcome (`ok` | `error`) from the runner's own result convention — a failed tool
- * returns `[error] …`. Computed in-process; only the label lands on the span, never the result. */
+/**
+ * A tool call's outcome (`ok` | `error`) from the runner's own result convention — a failed tool
+ * returns `[error] …`. Computed in-process; only the label lands on the span, never the result.
+ *
+ * Classifies through {@link isToolError}, the single definition shared with `Result.toolErrors` — the
+ * two cannot disagree about what a tool failure is.
+ *
+ * ⚠️ Measured 2026-07-31 (GAPCLOSE S7): this can currently only fire for a tool that *returns* the
+ * marker or replays one, because a tool that THROWS emits no `ToolCall` at all, so no `execute_tool`
+ * span is rendered for it. `Result.toolErrors` is the surface that sees those; closing the span-side
+ * gap needs core to emit on failure and is deliberately not done here.
+ */
 function toolOutcome(call: ToolCall): string {
-  const r = call.result;
-  return typeof r === 'string' && r.startsWith('[error]') ? 'error' : 'ok';
+  return isToolError(call.result) ? 'error' : 'ok';
 }
 
 // --- E-wave domain spans (RAG / memory / orchestration / checkpoints / blocked tools) ------------

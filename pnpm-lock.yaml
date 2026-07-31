@@ -72,17 +72,17 @@ importers:
         specifier: ^3.0.1
         version: 3.0.1(@cendor/squeeze@3.0.0(@opentelemetry/api@1.9.1))(@opentelemetry/api@1.9.1)
       '@cendor/core':
+        specifier: ^3.2.0
+        version: 3.2.0(@opentelemetry/api@1.9.1)
+      '@cendor/guardrails':
         specifier: ^3.1.0
         version: 3.1.0(@opentelemetry/api@1.9.1)
-      '@cendor/guardrails':
-        specifier: ^3.0.0
-        version: 3.0.0(@opentelemetry/api@1.9.1)
       '@cendor/squeeze':
         specifier: ^3.0.0
         version: 3.0.0(@opentelemetry/api@1.9.1)
       '@cendor/tokenguard':
-        specifier: ^3.0.2
-        version: 3.0.2(@opentelemetry/api@1.9.1)
+        specifier: ^3.1.0
+        version: 3.1.0(@opentelemetry/api@1.9.1)
       zod:
         specifier: ^4.0.0
         version: 4.4.3
@@ -282,8 +282,8 @@ packages:
       '@cendor/squeeze':
         optional: true
 
-  '@cendor/core@3.1.0':
-    resolution: {integrity: sha512-OhFFykUCIvkIitRGEERp+sdJ9t4eb4NY9HO7R4m80ICsa/oBv4WsyiKNeAg9nm9aGrHHjWEV4cbJeoMijU27/g==}
+  '@cendor/core@3.2.0':
+    resolution: {integrity: sha512-6ErmUPrfwX7Yd3uHOyFKgH/D0fBGU7di3H8CG2PkjZNXzT80uW9aidYnRGLctVTSatZSNobejcMSTZesNLX83g==}
     engines: {node: '>=20'}
     peerDependencies:
       '@azure/ai-agents': '>=1'
@@ -300,9 +300,9 @@ packages:
       '@opentelemetry/api':
         optional: true
 
-  '@cendor/guardrails@3.0.0':
-    resolution: {integrity: sha512-CC8DnDtnxiXlUpq92s/3wu5iCAlyv0xQTGo6XllfnUr4k5p8RXJ2eb3awgTlozv52fo0uIpwLMIEveQB0Ufx6w==}
-    engines: {node: '>=18'}
+  '@cendor/guardrails@3.1.0':
+    resolution: {integrity: sha512-tJwTH2n434ZGy3OtI/iPvUPTfNrzRd5BMW09PCC45m67iGRjFo2vJWtL5zZMO5640l4tW+vB+aZ3WCjMZx0kNg==}
+    engines: {node: '>=20'}
     peerDependencies:
       '@huggingface/transformers': '>=3'
       '@opentelemetry/api': '>=1'
@@ -316,8 +316,8 @@ packages:
     resolution: {integrity: sha512-zJClIKKEW8cuMJaCsx16/s7YBCf7UMx+CZRWQUUB58MFvPF0if9aDMx9mNz1mkQl1uByC746zdgElAPxXNhITw==}
     engines: {node: '>=18'}
 
-  '@cendor/tokenguard@3.0.2':
-    resolution: {integrity: sha512-r8oMIWMDi9Nph8Np+08nj1r1b1ahj0QVSiksphqHgD5HnAfvHTsKxs+8u9Z+PeLmdO/2Ao0zMtga61cOVqV3zg==}
+  '@cendor/tokenguard@3.1.0':
+    resolution: {integrity: sha512-1JbCv6HZP5kpvngo0+XA0JjZoLZp3zdlQGvFUd402DmtpIBdkzP6RA5eCQIvzS1Ve4rkCnnf/vy77QeVW9t9+Q==}
     engines: {node: '>=20'}
     peerDependencies:
       '@opentelemetry/api': '>=1'
@@ -1980,7 +1980,7 @@ snapshots:
 
   '@cendor/acttrace@3.1.0(@opentelemetry/api@1.9.1)':
     dependencies:
-      '@cendor/core': 3.1.0(@opentelemetry/api@1.9.1)
+      '@cendor/core': 3.2.0(@opentelemetry/api@1.9.1)
     optionalDependencies:
       '@opentelemetry/api': 1.9.1
     transitivePeerDependencies:
@@ -1990,7 +1990,7 @@ snapshots:
 
   '@cendor/cassette@3.0.0(@opentelemetry/api@1.9.1)':
     dependencies:
-      '@cendor/core': 3.1.0(@opentelemetry/api@1.9.1)
+      '@cendor/core': 3.2.0(@opentelemetry/api@1.9.1)
     transitivePeerDependencies:
       - '@azure/ai-agents'
       - '@langchain/core'
@@ -1999,7 +1999,7 @@ snapshots:
 
   '@cendor/contextkit@3.0.1(@cendor/squeeze@3.0.0(@opentelemetry/api@1.9.1))(@opentelemetry/api@1.9.1)':
     dependencies:
-      '@cendor/core': 3.1.0(@opentelemetry/api@1.9.1)
+      '@cendor/core': 3.2.0(@opentelemetry/api@1.9.1)
     optionalDependencies:
       '@cendor/squeeze': 3.0.0(@opentelemetry/api@1.9.1)
     transitivePeerDependencies:
@@ -2008,16 +2008,16 @@ snapshots:
       - '@openai/agents'
       - '@opentelemetry/api'
 
-  '@cendor/core@3.1.0(@opentelemetry/api@1.9.1)':
+  '@cendor/core@3.2.0(@opentelemetry/api@1.9.1)':
     dependencies:
       decimal.js: 10.6.0
       js-tiktoken: 1.0.21
     optionalDependencies:
       '@opentelemetry/api': 1.9.1
 
-  '@cendor/guardrails@3.0.0(@opentelemetry/api@1.9.1)':
+  '@cendor/guardrails@3.1.0(@opentelemetry/api@1.9.1)':
     dependencies:
-      '@cendor/core': 3.1.0(@opentelemetry/api@1.9.1)
+      '@cendor/core': 3.2.0(@opentelemetry/api@1.9.1)
     optionalDependencies:
       '@opentelemetry/api': 1.9.1
     transitivePeerDependencies:
@@ -2027,7 +2027,7 @@ snapshots:
 
   '@cendor/squeeze@3.0.0(@opentelemetry/api@1.9.1)':
     dependencies:
-      '@cendor/core': 3.1.0(@opentelemetry/api@1.9.1)
+      '@cendor/core': 3.2.0(@opentelemetry/api@1.9.1)
     optionalDependencies:
       better-sqlite3: 12.11.1
     transitivePeerDependencies:
@@ -2036,9 +2036,9 @@ snapshots:
       - '@openai/agents'
       - '@opentelemetry/api'
 
-  '@cendor/tokenguard@3.0.2(@opentelemetry/api@1.9.1)':
+  '@cendor/tokenguard@3.1.0(@opentelemetry/api@1.9.1)':
     dependencies:
-      '@cendor/core': 3.1.0(@opentelemetry/api@1.9.1)
+      '@cendor/core': 3.2.0(@opentelemetry/api@1.9.1)
     optionalDependencies:
       '@opentelemetry/api': 1.9.1
       better-sqlite3: 12.11.1

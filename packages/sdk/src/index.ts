@@ -26,8 +26,17 @@ export {
   ToolCall,
   Money,
   sumMoney,
+  isToolError,
+  TOOL_ERROR_PREFIX,
 } from './types.js';
-export type { Message, ParsedResponse, ToolInvocation, StreamEvent, Usage } from './types.js';
+export type {
+  Message,
+  ParsedResponse,
+  ToolInvocation,
+  StreamEvent,
+  ToolError,
+  Usage,
+} from './types.js';
 
 export {
   handoff,
@@ -68,6 +77,7 @@ export {
   // `guard(opts, fn)` scope form) — Object.is(sdk.guard, acttrace.guard)
   guard,
   registerModelPrice,
+  registerDeployment,
   BudgetExceeded,
   BudgetEvent,
   Policy,

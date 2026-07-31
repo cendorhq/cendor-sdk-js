@@ -106,6 +106,31 @@ export function registerModelPrice(model: string, opts: RegisterModelPriceOption
   prices.register(model, rates);
 }
 
+/** Options for {@link registerDeployment}. */
+export interface RegisterDeploymentOptions {
+  /** A model id already in the price table whose rates the deployment should use. */
+  like: string;
+}
+
+/**
+ * Price an Azure/Foundry **deployment name** like the model it serves.
+ *
+ * A re-export of `@cendor/core`'s `prices.registerDeployment` — see that function for the full
+ * contract. The short version: on Azure the id a call reports is the deployment name *you* chose, so
+ * it is in no price table and its cost is `null`; this maps it onto a base model's rates explicitly.
+ * Copy-at-registration, survives `refresh()`, throws `UnknownModelError` if `like` is unknown.
+ *
+ * @example
+ * ```ts
+ * import { registerDeployment, withBudget } from '@cendor/sdk';
+ * registerDeployment('prod-gpt4o-eastus', { like: 'gpt-4o' });
+ * await withBudget({ usd: 0.1, onExceed: 'block' }, async () => undefined); // now binds
+ * ```
+ */
+export function registerDeployment(deployment: string, opts: RegisterDeploymentOptions): void {
+  prices.registerDeployment(deployment, { like: opts.like });
+}
+
 /**
  * Per-agent governance: attribute spend to the agent (`track({agent})`) + enforce its `maxUsd` cap
  * (a pre-flight `budget(onExceed:'block')`) when set. The single shared helper the orchestrator wraps
