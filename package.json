@@ -33,7 +33,7 @@
     "@types/node": "^22.20.1",
     "better-sqlite3": "^12.11.1",
     "ollama": "^0.6.3",
-    "openai": "^6.49.0",
+    "openai": "^7.0.0",
     "rimraf": "^6.0.1",
     "typescript": "^5.7.3",
     "undici": "^7.29.0",
