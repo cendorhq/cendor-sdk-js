@@ -93,6 +93,50 @@ export interface CheckpointState {
 }
 
 /**
+ * The final assistant answer a transcript already ends with, or `null`.
+ *
+ * A transcript whose last message is an assistant turn with non-empty `content` and no `tool_calls`
+ * is complete in substance: every runner loop breaks on exactly that message, and a tool or handoff
+ * turn always appends `role: "tool"` results after it — so an *unfinished* checkpoint can only
+ * carry this shape when the crash landed in the window between the last per-turn save and the
+ * `done` save. Conservative on purpose: empty/absent content falls through to the normal resume.
+ */
+function finalAnswer(messages: Message[]): string | null {
+  const last = messages[messages.length - 1] as Record<string, unknown> | undefined;
+  if (
+    last &&
+    last.role === 'assistant' &&
+    !last.tool_calls &&
+    typeof last.content === 'string' &&
+    last.content.length > 0
+  ) {
+    return last.content;
+  }
+  return null;
+}
+
+/**
+ * Normalise an unfinished state that is finished in substance to a finished one.
+ *
+ * Returns the state unchanged when it is already `done` (or null); returns a settled copy
+ * (`done: true`, `output` recovered from the stored output or the final answer) when the transcript
+ * already ends with a final assistant answer; otherwise returns the state unchanged. A stored
+ * `output` (the streaming paths persist it with `done: false`, possibly guardrail-transformed) wins
+ * over the raw last-message content. This is what stops a resume from re-invoking the model on a
+ * complete conversation — where re-doing the task, completed tool calls included, is a legitimate
+ * sample for the model to take (measured live by the external suite). PY parity: `_settle`.
+ */
+export function settleCheckpoint(state: CheckpointState | null): CheckpointState | null {
+  if (state && !state.done) {
+    const answer = finalAnswer(state.messages ?? []);
+    if (answer !== null) {
+      return { ...state, done: true, output: state.output ?? answer };
+    }
+  }
+  return state;
+}
+
+/**
  * Persist and restore run state to a local JSON file — pass one as `run(agent, input, { checkpoint })`
  * and a crashed run resumes from the last saved turn without re-running completed work.
  *

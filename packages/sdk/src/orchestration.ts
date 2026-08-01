@@ -10,7 +10,7 @@ import { bus, trace } from '@cendor/core';
 import { z } from 'zod';
 import { emitCheckpoint, emitHandoff, emitMemory } from './_telemetry.js';
 import type { Agent, HandoffTarget } from './agent.js';
-import { type CheckpointState, asCheckpointer } from './checkpoint.js';
+import { type CheckpointState, asCheckpointer, settleCheckpoint } from './checkpoint.js';
 import * as gate from './gate.js';
 import { withConversation, withScope } from './governance.js';
 import { withLiveRootActive } from './otel.js';
@@ -145,7 +145,9 @@ export async function runAgents(
 ): Promise<Result> {
   const ckpt = asCheckpointer(opts.checkpoint);
   const registry = new Map(agents.map((a) => [a.name, a]));
-  const saved = ckpt?.load() ?? null;
+  // settleCheckpoint: a segment that answered (no handoff) with the done save never landed (the
+  // crash window) is finished in substance — short-circuit it exactly like done. See Runner.run.
+  const saved = settleCheckpoint(ckpt?.load() ?? null);
   // Done-resume short-circuit: a completed checkpoint replays its stored result WITHOUT minting a
   // run or re-entering any segment (no model call, no tool re-run). Steps are empty (no bus events);
   // the persisted messages/output are returned as-is. PY parity with the single-agent short-circuit.
@@ -480,7 +482,9 @@ export async function* streamAgents(
 ): AsyncGenerator<StreamEvent> {
   const registry = new Map(agents.map((a) => [a.name, a]));
   const ckpt = asCheckpointer(opts.checkpoint);
-  const saved = ckpt?.load() ?? null;
+  // settleCheckpoint: an answering-segment save with done:false (the crash window) is finished in
+  // substance — short-circuit it exactly like done. See Runner.run.
+  const saved = settleCheckpoint(ckpt?.load() ?? null);
   // S13: a finished team-stream checkpoint replays its stored Result as a lone terminal RunComplete
   // — no segment runs, no re-yielded deltas (S13-D). Mirrors runAgents' done-resume short-circuit.
   if (saved?.done) {

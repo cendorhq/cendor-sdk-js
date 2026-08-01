@@ -180,6 +180,173 @@ describe('@cendor/sdk — checkpoint / resume', () => {
     expect(result.messages.some((m) => m.role === 'tool')).toBe(true); // persisted trail preserved
   });
 
+  // ------------------------------------ SETTLED (unfinished-but-complete) checkpoints
+  //
+  // The crash window: every path saves the answering turn with done:false BEFORE the done:true save
+  // lands, so a crash there leaves an "unfinished" checkpoint whose transcript already ends with
+  // the final assistant answer. Resuming that used to re-enter the model loop on a complete
+  // conversation — where re-doing the task, tools included, is a legitimate sample for the model
+  // (measured live: BUG-sdk-resume-recalls-a-tool-already-in-the-replayed-messages).
+
+  function writeSettled(
+    path: string,
+    tail: Record<string, unknown>[] | null,
+    output: string | null = null,
+  ): void {
+    const messages: Record<string, unknown>[] = [
+      { role: 'user', content: 'weather in Paris?' },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: 'call_1',
+            type: 'function',
+            function: { name: 'get_weather', arguments: '{"city":"Paris"}' },
+          },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'call_1', name: 'get_weather', content: 'Sunny in Paris' },
+      ...(tail ?? [{ role: 'assistant', content: "It's sunny in Paris." }]),
+    ];
+    writeFileSync(path, JSON.stringify({ run_id: 'r-settled', messages, done: false, output }));
+  }
+
+  function countingClient(counter: { model: number }, content = 'SHOULD NOT RUN') {
+    return {
+      chat: {
+        completions: {
+          create: async () => {
+            counter.model++;
+            return openaiChat({ content });
+          },
+        },
+      },
+    };
+  }
+
+  it('settled resume (unfinished, transcript ends in the final answer) — 0 model + 0 tool calls', async () => {
+    const path = ckptPath('settled.ckpt.json');
+    writeSettled(path, null);
+    const counter = { model: 0 };
+    let toolRuns = 0;
+    const weather = tool(
+      (args: { city: string }) => {
+        toolRuns++;
+        return `Sunny in ${args.city}`;
+      },
+      {
+        name: 'get_weather',
+        description: 'Current weather for a city.',
+        parameters: z.object({ city: z.string() }),
+      },
+    );
+    const agent = new Agent({
+      name: 'assistant',
+      model: 'gpt-4o',
+      tools: [weather],
+      client: countingClient(counter),
+    });
+    const result = await run(agent, 'weather in Paris?', { checkpoint: path });
+    expect(result.output).toBe("It's sunny in Paris.");
+    expect(counter.model).toBe(0); // the loop was never re-entered
+    expect(toolRuns).toBe(0); // the completed tool was not re-run
+    expect(result.steps).toHaveLength(0); // no bus events on a resume
+    expect(result.traceId).toBe('r-settled'); // done-resume parity: stored run id, no fresh mint
+    expect(result.incomplete).toBe(false);
+  });
+
+  it('settled resume prefers a stored output over the last-message content', async () => {
+    // A stream-path save carries `output` (possibly guardrail-transformed) with done:false.
+    const path = ckptPath('settled-stored.ckpt.json');
+    writeSettled(path, [{ role: 'assistant', content: 'raw answer' }], 'gated answer');
+    const counter = { model: 0 };
+    const agent = new Agent({
+      name: 'assistant',
+      model: 'gpt-4o',
+      client: countingClient(counter),
+    });
+    const result = await run(agent, 'weather in Paris?', { checkpoint: path });
+    expect(result.output).toBe('gated answer');
+    expect(counter.model).toBe(0);
+  });
+
+  it('a mid-run checkpoint (transcript ends at a tool result) still resumes through the loop', async () => {
+    const path = ckptPath('midrun.ckpt.json');
+    writeSettled(path, []); // ends at the tool-result message — genuinely mid-run
+    const counter = { model: 0 };
+    let toolRuns = 0;
+    const weather = tool(
+      (args: { city: string }) => {
+        toolRuns++;
+        return `Sunny in ${args.city}`;
+      },
+      {
+        name: 'get_weather',
+        description: 'Current weather for a city.',
+        parameters: z.object({ city: z.string() }),
+      },
+    );
+    const agent = new Agent({
+      name: 'assistant',
+      model: 'gpt-4o',
+      tools: [weather],
+      client: countingClient(counter, "It's sunny in Paris."),
+    });
+    const result = await run(agent, 'weather in Paris?', { checkpoint: path });
+    expect(result.output).toBe("It's sunny in Paris.");
+    expect(counter.model).toBe(1); // the loop ran — this shape is NOT settled
+    expect(toolRuns).toBe(0); // the saved tool result was replayed, not re-executed by the SDK
+  });
+
+  it('an empty-content assistant tail is not settled (conservative predicate)', async () => {
+    const path = ckptPath('empty-tail.ckpt.json');
+    writeSettled(path, [{ role: 'assistant', content: '' }]);
+    const counter = { model: 0 };
+    const agent = new Agent({
+      name: 'assistant',
+      model: 'gpt-4o',
+      client: countingClient(counter, 'recovered answer'),
+    });
+    const result = await run(agent, 'weather in Paris?', { checkpoint: path });
+    expect(result.output).toBe('recovered answer');
+    expect(counter.model).toBe(1);
+  });
+
+  it('a settled TEAM checkpoint short-circuits like a done one', async () => {
+    const path = ckptPath('team-settled.ckpt.json');
+    let modelCalls = 0;
+    writeFileSync(
+      path,
+      JSON.stringify({
+        run_id: 'team-settled',
+        messages: [
+          { role: 'user', content: 'hi' },
+          { role: 'assistant', content: 'final team answer' },
+        ],
+        active: 'a',
+        seen: ['a'],
+        seg: 0,
+        done: false, // the crash window: the segment answered, the done save never landed
+        output: null,
+      }),
+    );
+    const client = {
+      chat: {
+        completions: {
+          create: async () => {
+            modelCalls++;
+            return openaiChat({ content: 'SHOULD NOT RUN' });
+          },
+        },
+      },
+    };
+    const a = new Agent({ name: 'a', model: 'gpt-4o', client });
+    const result = await run([a], 'IGNORED-NEW-INPUT', { checkpoint: path });
+    expect(result.output).toBe('final team answer');
+    expect(modelCalls).toBe(0); // no segment re-entered
+  });
+
   it('multi-agent resume of a DONE checkpoint replays the stored result — 0 model + 0 tool calls', async () => {
     const path = ckptPath('team-done.ckpt.json');
     let modelCalls = 0;

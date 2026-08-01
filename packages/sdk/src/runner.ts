@@ -12,7 +12,7 @@ import { LLMCall, ToolCall, bus, currentTraceId, installTraceContext, trace } fr
 import { type Guardrail, GuardrailTripped } from '@cendor/guardrails';
 import { emitCheckpoint, emitMemory } from './_telemetry.js';
 import type { Agent } from './agent.js';
-import { type Checkpointer, asCheckpointer } from './checkpoint.js';
+import { type Checkpointer, asCheckpointer, settleCheckpoint } from './checkpoint.js';
 import * as gate from './gate.js';
 import { withConversation, withScope } from './governance.js';
 import { autoScopeStream, withAutoRunScope, withLiveRootActive } from './otel.js';
@@ -667,7 +667,11 @@ export class Runner {
   async run(input: string | Message | Message[]): Promise<Result> {
     const agent = this.agent;
     const ckpt = asCheckpointer(this.opts.checkpoint);
-    const saved = ckpt?.load() ?? null;
+    // settleCheckpoint: an unfinished state whose transcript already ends in a final assistant
+    // answer (the crash window between the last per-turn save and the done save) is finished in
+    // substance — treat it exactly like done, or the model gets re-asked to continue a complete
+    // conversation and may re-do the task, completed tool calls included (measured live).
+    const saved = settleCheckpoint(ckpt?.load() ?? null);
     // Done-resume short-circuit: a completed checkpoint replays its stored result WITHOUT minting a
     // run or re-entering agentLoop (no model call, no tool re-run). Steps are empty (no bus events);
     // the persisted messages/output are returned as-is. PY parity.
@@ -829,7 +833,9 @@ export async function* streamOne(
   opts: Omit<RunOptions, 'onStep' | 'retry'> = {},
 ): AsyncGenerator<StreamEvent> {
   const ckpt = asCheckpointer(opts.checkpoint);
-  const saved = ckpt?.load() ?? null;
+  // settleCheckpoint: an answering-turn save with done:false (the crash window) is finished in
+  // substance — short-circuit it exactly like done. See Runner.run.
+  const saved = settleCheckpoint(ckpt?.load() ?? null);
   // S13: a finished checkpoint replays its stored Result as a lone terminal RunComplete — no model
   // call, no re-yielded deltas (S13-D). Mirrors Runner.run's done-resume short-circuit.
   if (saved?.done) {
