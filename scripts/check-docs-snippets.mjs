@@ -39,6 +39,26 @@ const DOCS_DIRS = (
 const libsJsRoot = process.env.CENDOR_LIBS_JS
   ? path.resolve(process.env.CENDOR_LIBS_JS)
   : path.join(repoRoot, '..', 'cendor-libs-js');
+/**
+ * `{ '@cendor/core': ['<abs>/packages/core/dist/index.d.ts'], … }` for every sibling package that
+ * has been BUILT. Silently empty when `cendor-libs-js` is not checked out, or not built — a missing
+ * sibling must fall back to node_modules, never fail.
+ */
+function siblingCorePaths(workDir) {
+  const pkgs = path.join(libsJsRoot, 'packages');
+  if (!existsSync(pkgs)) return {};
+  const out = {};
+  for (const e of readdirSync(pkgs, { withFileTypes: true })) {
+    if (!e.isDirectory()) continue;
+    const dts = path.join(pkgs, e.name, 'dist', 'index.d.ts');
+    if (!existsSync(dts)) continue;
+    // tsc resolves `paths` against baseUrl, which is the temp work dir; use a relative path so a
+    // drive letter or a space in the checkout path cannot break it.
+    out[`@cendor/${e.name}`] = [path.relative(workDir, dts).split(path.sep).join('/')];
+  }
+  return out;
+}
+
 const SOURCE_DIRS = (
   process.env.SOURCE_DIRS?.split(path.delimiter) ?? [
     path.join(repoRoot, 'packages', 'sdk', 'src'),
@@ -338,7 +358,16 @@ writeFileSync(
         esModuleInterop: true,
         types: ['node'],
         baseUrl: '.',
-        paths: { '@cendor/sdk': ['../dist/index.d.ts'] },
+        // `@cendor/sdk` resolves to the workspace's BUILT dist, not node_modules — that is what
+        // makes a breaking API change fail here before release rather than after it.
+        //
+        // ⚠️ The same has to be true of `@cendor/*` when the sibling `cendor-libs-js` is checked
+        // out, and until 2026-08-02 it was not: core resolved to the PUBLISHED package, so a new
+        // core API could not be documented until the wave AFTER it shipped, and every docs tab
+        // teaching it failed this gate for a reason that was not a defect. When the sibling is
+        // absent (the CI docs-snippets job) node_modules is still the right answer, so this only
+        // adds a mapping for packages that are actually built next door.
+        paths: { '@cendor/sdk': ['../dist/index.d.ts'], ...siblingCorePaths(workDir) },
       },
       include: ['./**/*.ts'],
     },

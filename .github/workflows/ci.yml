@@ -75,6 +75,16 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      # Build the SIBLING too. `check:docs` maps `@cendor/*` to the sibling's built `dist` when one
+      # exists, exactly as it maps `@cendor/sdk` to this repo's — that is what lets a docs tab teach
+      # a core API in the same wave that adds it. Without this step the sibling is checked out but
+      # never built, the mapping finds no `dist/index.d.ts`, and every snippet silently falls back
+      # to the PUBLISHED `@cendor/core` — so the gate fails on new API for a reason that is not a
+      # defect. Best-effort: a sibling that will not build must not take this job red on its own.
+      - name: Build the sibling cendor-libs-js (for the @cendor/* type mapping)
+        continue-on-error: true
+        working-directory: _siblings/cendor-libs-js
+        run: pnpm install --frozen-lockfile && pnpm build
       - name: Typecheck docs snippets + source @examples
         env:
           DOCS_DIRS: ${{ github.workspace }}/_siblings/cendor-libs/docs:${{ github.workspace }}/_siblings/cendor-sdk/docs
