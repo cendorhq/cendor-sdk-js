@@ -27,7 +27,7 @@
     "@cendor/acttrace": "^3.1.0",
     "@cendor/cassette": "^3.0.0",
     "@cendor/contextkit": "^3.1.0",
-    "@cendor/core": "^3.6.0",
+    "@cendor/core": "^3.6.1",
     "@cendor/guardrails": "^3.1.1",
     "@cendor/squeeze": "^3.1.0",
     "@cendor/tokenguard": "^3.2.0",
