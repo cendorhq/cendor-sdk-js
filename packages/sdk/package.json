@@ -31,7 +31,7 @@
     "@cendor/guardrails": "^3.1.1",
     "@cendor/squeeze": "^3.1.0",
     "@cendor/tokenguard": "^3.2.0",
-    "zod": "^4.0.0"
+    "zod": "^4.5.4"
   },
   "optionalDependencies": {
     "better-sqlite3": "^12.11.1"
